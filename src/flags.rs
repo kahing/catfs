@@ -10,17 +10,10 @@ pub struct Flag<'a, 'b> {
     pub value: &'b mut Any,
 }
 
-pub fn add_options<'a, 'b>(
-    mut app: clap::App<'a, 'a>,
-    flags: &'b [Flag<'a, 'b>],
-) -> clap::App<'a, 'a> {
+pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a, 'b>]) {
     for f in flags.iter() {
         app = app.arg(f.arg.clone());
     }
-    return app;
-}
-
-pub fn parse_options<'a, 'b>(app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a, 'b>]) {
     let matches = app.get_matches();
 
     for f in flags.iter_mut() {

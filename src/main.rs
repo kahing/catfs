@@ -1,19 +1,13 @@
 #[macro_use]
 extern crate clap;
 extern crate env_logger;
-extern crate fuse;
 
-use std::env;
 use std::collections::HashMap;
 
 use clap::{App, Arg};
-use fuse::Filesystem;
-
-struct CatFS;
-
-impl Filesystem for CatFS {}
 
 mod flags;
+mod catfs;
 
 struct FlagStorage {
     cat_from: String,
@@ -40,7 +34,7 @@ fn main() {
 
     let mut flags = FlagStorage { ..Default::default() };
 
-    let mut app = App::new("catfs")
+    let app = App::new("catfs")
         .about("Cache Anything FileSystem")
         .version(crate_version!());
 
@@ -78,8 +72,6 @@ fn main() {
             },
         ];
 
-
-        app = flags::add_options(app, &args);
 
         flags::parse_options(app, &mut args);
     }
