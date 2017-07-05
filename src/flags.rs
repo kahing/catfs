@@ -1,21 +1,45 @@
+//extern crate mopa;
 extern crate clap;
 
+use std::any::Any;
 use std::collections::HashMap;
 
-use clap::{App, Arg, SubCommand};
+use clap::{App, Arg};
 
-
-struct FlagStorage {
-    cat_from: String,
-    cat_to: String,
-    mount_point: String,
-    mount_options: HashMap<String, String>,
-    foreground: bool,
+pub struct Flag<'a, 'b> {
+    pub arg: Arg<'a, 'a>,
+    pub value: &'b mut Any,
 }
 
-pub fn add_options<'a, 'b>(app: clap::App<'a, 'b>) -> clap::App<'a, 'b> {
-    return app.arg(Arg::from_usage(
-        "-o 'Additional system-specific mount options. Be careful!'",
-    ));
+pub fn add_options<'a, 'b>(
+    mut app: clap::App<'a, 'a>,
+    flags: &'b [Flag<'a, 'b>],
+) -> clap::App<'a, 'a> {
+    for f in flags.iter() {
+        app = app.arg(f.arg.clone());
+    }
+    return app;
 }
-//pub fn add_options(app: u32) {}
+
+pub fn parse_options<'a, 'b>(app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a, 'b>]) {
+    let matches = app.get_matches();
+
+    for f in flags.iter_mut() {
+        let name = f.arg.b.name;
+
+        if matches.is_present(name) {
+            let s = matches.value_of(name);
+
+            // cannot use else if here or rust would claim double mutable borrow
+            if let Some(v) = f.value.downcast_mut::<String>() {
+                *v = String::from(s.unwrap());
+            }
+            if let Some(v) = f.value.downcast_mut::<bool>() {
+                *v = true;
+            }
+            if let Some(v) = f.value.downcast_mut::<HashMap<String, String>>() {
+                // parse key=value
+            }
+        }
+    }
+}
