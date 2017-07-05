@@ -1,38 +1,33 @@
 #[macro_use]
-extern crate clap;
+extern crate log;
 extern crate env_logger;
 
+#[macro_use]
+extern crate clap;
+extern crate fuse;
+
 use std::collections::HashMap;
+use std::ffi::OsString;
+use std::io::Error;
 
 use clap::{App, Arg};
 
 mod flags;
 mod catfs;
 
+#[derive(Default)]
 struct FlagStorage {
-    cat_from: String,
-    cat_to: String,
-    mount_point: String,
+    cat_from: OsString,
+    cat_to: OsString,
+    mount_point: OsString,
     mount_options: HashMap<String, String>,
     foreground: bool,
-}
-
-impl Default for FlagStorage {
-    fn default() -> FlagStorage {
-        return FlagStorage {
-            cat_from: String::from(""),
-            cat_to: String::from(""),
-            mount_point: String::from(""),
-            mount_options: HashMap::new(),
-            foreground: false,
-        };
-    }
 }
 
 fn main() {
     env_logger::init().unwrap();
 
-    let mut flags = FlagStorage { ..Default::default() };
+    let mut flags: FlagStorage = Default::default();
 
     let app = App::new("catfs")
         .about("Cache Anything FileSystem")
@@ -81,5 +76,18 @@ fn main() {
     }
 
     //let mountpoint = env::args_os().nth(1).unwrap();
-    //fuse::mount(CatFS, &mountpoint, &[]).unwrap();
+    unsafe {
+        let res = fuse::spawn_mount(
+            catfs::CatFS::new(flags.cat_from.as_os_str(), flags.cat_to.as_os_str()),
+            &flags.mount_point,
+            &[],
+        );
+        match res {
+            Ok(session) => {
+                // TODO wait until program is terminated
+                // righ tnow this unmounts right away because session is dropped
+            }
+            Err(e) => error!("Cannot mount {:?}: {}", flags.mount_point, e),
+        }
+    }
 }

@@ -3,7 +3,7 @@ extern crate clap;
 
 use std::any::Any;
 use std::collections::HashMap;
-
+use std::ffi::OsString;
 
 pub struct Flag<'a, 'b> {
     pub arg: clap::Arg<'a, 'a>,
@@ -20,11 +20,14 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
         let name = f.arg.b.name;
 
         if matches.is_present(name) {
-            let s = matches.value_of(name);
-
             // cannot use else if here or rust would claim double mutable borrow
             if let Some(v) = f.value.downcast_mut::<String>() {
+                let s = matches.value_of(name);
                 *v = String::from(s.unwrap());
+            }
+            if let Some(v) = f.value.downcast_mut::<OsString>() {
+                let s = matches.value_of_os(name);
+                *v = s.unwrap().to_os_string();
             }
             if let Some(v) = f.value.downcast_mut::<bool>() {
                 *v = true;
