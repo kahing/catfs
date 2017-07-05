@@ -4,10 +4,9 @@ extern crate clap;
 use std::any::Any;
 use std::collections::HashMap;
 
-use clap::{App, Arg};
 
 pub struct Flag<'a, 'b> {
-    pub arg: Arg<'a, 'a>,
+    pub arg: clap::Arg<'a, 'a>,
     pub value: &'b mut Any,
 }
 

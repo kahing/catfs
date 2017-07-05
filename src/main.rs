@@ -16,9 +16,9 @@ impl Filesystem for CatFS {}
 mod flags;
 
 struct FlagStorage {
-    cat_from: Option<String>,
-    cat_to: Option<String>,
-    mount_point: Option<String>,
+    cat_from: String,
+    cat_to: String,
+    mount_point: String,
     mount_options: HashMap<String, String>,
     foreground: bool,
 }
@@ -26,9 +26,9 @@ struct FlagStorage {
 impl Default for FlagStorage {
     fn default() -> FlagStorage {
         return FlagStorage {
-            cat_from: None,
-            cat_to: None,
-            mount_point: None,
+            cat_from: String::from(""),
+            cat_to: String::from(""),
+            mount_point: String::from(""),
             mount_options: HashMap::new(),
             foreground: false,
         };
@@ -57,6 +57,24 @@ fn main() {
                     "Additional system-specific mount options. Be careful!",
                 ),
                 value: &mut flags.mount_options,
+            },
+            flags::Flag {
+                arg: Arg::with_name("from").index(1).required(true).help(
+                    "Cache files from this directory",
+                ),
+                value: &mut flags.cat_from,
+            },
+            flags::Flag {
+                arg: Arg::with_name("to").index(2).required(true).help(
+                    "Cache files to this directory",
+                ),
+                value: &mut flags.cat_to,
+            },
+            flags::Flag {
+                arg: Arg::with_name("mountpoint").index(3).required(true).help(
+                    "Expose the mount point at this directory",
+                ),
+                value: &mut flags.mount_point,
             },
         ];
 
