@@ -1,15 +1,16 @@
 #[macro_use]
-extern crate log;
-extern crate env_logger;
-
-#[macro_use]
 extern crate clap;
+extern crate env_logger;
 extern crate fuse;
+#[macro_use]
+extern crate log;
+extern crate chan_signal;
 
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::Error;
 
+use chan_signal::Signal;
 use clap::{App, Arg};
 
 mod flags;
@@ -75,7 +76,8 @@ fn main() {
         println!("foreground on");
     }
 
-    //let mountpoint = env::args_os().nth(1).unwrap();
+    let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+
     unsafe {
         let res = fuse::spawn_mount(
             catfs::CatFS::new(flags.cat_from.as_os_str(), flags.cat_to.as_os_str()),
@@ -84,8 +86,8 @@ fn main() {
         );
         match res {
             Ok(session) => {
-                // TODO wait until program is terminated
-                // righ tnow this unmounts right away because session is dropped
+                // unmount after we get signaled because session will go out of scope
+                signal.recv().unwrap();
             }
             Err(e) => error!("Cannot mount {:?}: {}", flags.mount_point, e),
         }
