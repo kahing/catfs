@@ -42,7 +42,7 @@ impl Inode {
     }
 
     pub fn get_child_name(&self, name: &OsStr) -> OsString {
-        if self.attr.ino == 0 {
+        if self.attr.ino == fuse::FUSE_ROOT_ID {
             return name.to_os_string();
         } else {
             let mut s = self.path.clone();
