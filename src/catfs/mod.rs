@@ -33,13 +33,30 @@ pub struct CatFS {
 }
 
 impl CatFS {
-    pub fn new(from: &OsStr, to: &OsStr) -> CatFS {
-        return CatFS {
+    pub fn new(from: &OsStr, to: &OsStr) -> io::Result<CatFS> {
+        let mut catfs = CatFS {
             from: from.to_os_string(),
             cache: to.to_os_string(),
             ttl: Timespec { sec: 0, nsec: 0 },
             store: Mutex::new(Default::default()),
         };
+
+        let root_attr = Inode::lookup_path(from)?;
+        let mut inode = Inode::new(OsString::new(), to.to_os_string(), root_attr);
+        inode.use_ino(fuse::FUSE_ROOT_ID);
+
+        catfs.insert_inode(inode.get_path().clone(), Arc::new(inode));
+
+        return Ok(catfs);
+    }
+}
+
+impl CatFS {
+    fn insert_inode(&mut self, path: OsString, inode: Arc<Inode>) {
+        let mut store = self.store.lock().unwrap();
+        store.inodes_cache.insert(path, inode.clone());
+        let attr = inode.get_attr();
+        store.inodes.insert(attr.ino, inode.clone());
     }
 }
 
@@ -48,11 +65,6 @@ impl Filesystem for CatFS {
         let parent_inode: Arc<Inode>;
         {
             let store = self.store.lock().unwrap();
-            // clone to hack around the borrow checker, I want to
-            // unlock the store while keeping the parent_inode so I
-            // can do lookup without holding the lock. This is safe
-            // because the kernel shouldn't forget the parent inode
-            // while it's looking up a child
             parent_inode = store.inodes.get(&parent).unwrap().clone();
             let path = parent_inode.get_child_name(name);
 
@@ -64,14 +76,9 @@ impl Filesystem for CatFS {
 
         match parent_inode.lookup(name) {
             Ok(inode) => {
-                // cache the inode
-                let path = inode.get_path().clone();
-                let mut store = self.store.lock().unwrap();
-                let rc_inode = Arc::new(inode);
-                store.inodes_cache.insert(path, rc_inode.clone());
-                let attr = rc_inode.get_attr();
-                store.inodes.insert(attr.ino, rc_inode.clone());
-                reply.entry(&self.ttl, &attr, 0);
+                let inode = Arc::new(inode);
+                self.insert_inode(inode.get_path().clone(), inode.clone());
+                reply.entry(&self.ttl, &inode.get_attr(), 0);
             }
             Err(e) => {
                 reply.error(e.raw_os_error().unwrap());

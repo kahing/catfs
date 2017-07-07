@@ -77,19 +77,19 @@ fn main() {
     }
 
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-
-    unsafe {
-        let res = fuse::spawn_mount(
-            catfs::CatFS::new(flags.cat_from.as_os_str(), flags.cat_to.as_os_str()),
-            &flags.mount_point,
-            &[],
-        );
-        match res {
-            Ok(session) => {
-                // unmount after we get signaled because session will go out of scope
-                signal.recv().unwrap();
+    match catfs::CatFS::new(flags.cat_from.as_os_str(), flags.cat_to.as_os_str()) {
+        Ok(catfs) => {
+            unsafe {
+                let res = fuse::spawn_mount(catfs, &flags.mount_point, &[]);
+                match res {
+                    Ok(session) => {
+                        // unmount after we get signaled because session will go out of scope
+                        signal.recv().unwrap();
+                    }
+                    Err(e) => error!("Cannot mount {:?}: {}", flags.mount_point, e),
+                }
             }
-            Err(e) => error!("Cannot mount {:?}: {}", flags.mount_point, e),
         }
+        Err(e) => error!("Cannot mount {:?}: {}", flags.mount_point, e),
     }
 }
