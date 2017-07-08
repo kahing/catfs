@@ -6,7 +6,6 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use self::time::Timespec;
 
@@ -37,7 +36,7 @@ impl Inode {
             name: name,
             path: path,
             attr: attr,
-            refcnt: 0,
+            refcnt: 1,
         };
     }
 
@@ -58,6 +57,10 @@ impl Inode {
 
     pub fn get_attr(&self) -> &fuse::FileAttr {
         return &self.attr;
+    }
+
+    pub fn get_ino(&self) -> u64 {
+        return self.attr.ino;
     }
 
     pub fn lookup_path(path: &OsStr) -> io::Result<fuse::FileAttr> {
@@ -102,5 +105,15 @@ impl Inode {
 
     pub fn use_ino(&mut self, ino: u64) {
         self.attr.ino = ino;
+    }
+
+    pub fn inc_ref(&mut self) {
+        self.refcnt += 1;
+    }
+
+    // return stale
+    pub fn deref(&mut self, n: u64) -> bool {
+        self.refcnt -= n;
+        return self.refcnt == 0;
     }
 }

@@ -8,7 +8,6 @@ extern crate chan_signal;
 
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::Error;
 
 use chan_signal::Signal;
 use clap::{App, Arg};
