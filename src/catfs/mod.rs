@@ -2,7 +2,7 @@ extern crate fuse;
 extern crate libc;
 extern crate time;
 
-use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr};
+use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty, ReplyDirectory};
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -13,7 +13,10 @@ use std::sync::Mutex;
 
 use self::time::Timespec;
 
+mod dir;
 mod inode;
+mod rlibc;
+
 use self::inode::Inode;
 
 #[derive(Default)]
@@ -49,12 +52,27 @@ impl InodeStore {
     }
 }
 
+struct DirHandleStore {
+    handles: HashMap<u64, dir::DirHandle>,
+    next_id: u64,
+}
+
+impl Default for DirHandleStore {
+    fn default() -> DirHandleStore {
+        return DirHandleStore {
+            handles: Default::default(),
+            next_id: 1,
+        };
+    }
+}
+
 pub struct CatFS {
     from: OsString,
     cache: OsString,
 
     ttl: Timespec,
     store: Mutex<InodeStore>,
+    dh_store: Mutex<DirHandleStore>,
 }
 
 impl CatFS {
@@ -64,13 +82,14 @@ impl CatFS {
             cache: to.to_os_string(),
             ttl: Timespec { sec: 0, nsec: 0 },
             store: Mutex::new(Default::default()),
+            dh_store: Mutex::new(Default::default()),
         };
 
         let root_attr = Inode::lookup_path(from)?;
         let mut inode = Inode::new(OsString::new(), to.to_os_string(), root_attr);
         inode.use_ino(fuse::FUSE_ROOT_ID);
 
-        catfs.insert_inode(inode.get_path().clone(), Arc::new(inode));
+        catfs.insert_inode(inode.get_path().to_os_string(), Arc::new(inode));
 
         return Ok(catfs);
     }
@@ -101,11 +120,12 @@ impl Filesystem for CatFS {
             }
         }
 
+        // TODO spawn a thread to do lookup
         match parent_inode.lookup(name) {
             Ok(inode) => {
                 let inode = Arc::new(inode);
                 reply.entry(&self.ttl, &inode.get_attr(), 0);
-                self.insert_inode(inode.get_path().clone(), inode);
+                self.insert_inode(inode.get_path().to_os_string(), inode);
                 debug!("<-- lookup {} {:?}", parent, name);
             }
             Err(e) => {
@@ -132,5 +152,62 @@ impl Filesystem for CatFS {
         if stale {
             store.remove_ino(ino);
         }
+    }
+
+    fn opendir(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+        let store = self.store.lock().unwrap();
+        let inode = store.get(ino);
+        match dir::DirHandle::open(inode.get_path()) {
+            Ok(dir) => {
+                let mut dh_store = self.dh_store.lock().unwrap();
+                let dh = dh_store.next_id;
+                dh_store.next_id += 1;
+                dh_store.handles.insert(dh, dir);
+                reply.opened(dh, flags);
+            }
+            Err(e) => reply.error(e.raw_os_error().unwrap()),
+        }
+    }
+
+    fn readdir(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        dh: u64,
+        offset: u64,
+        mut reply: ReplyDirectory,
+    ) {
+        let mut dh_store = self.dh_store.lock().unwrap();
+        let mut dir = dh_store.handles.get_mut(&dh).unwrap();
+        // TODO spawn a thread
+        dir.seekdir(offset);
+        loop {
+            match dir.readdir() {
+                Ok(res) => {
+                    match res {
+                        Some(entry) => {
+                            if reply.add(entry.ino(), entry.off(), entry.kind(), entry.name()) {
+                                reply.ok();
+                                break;
+                            }
+                        }
+                        None => {
+                            reply.ok();
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    reply.error(e.raw_os_error().unwrap());
+                    break;
+                }
+            }
+        }
+    }
+
+    fn releasedir(&mut self, _req: &Request, _ino: u64, dh: u64, _flags: u32, reply: ReplyEmpty) {
+        let mut dh_store = self.dh_store.lock().unwrap();
+        dh_store.handles.remove(&dh);
+        reply.ok();
     }
 }

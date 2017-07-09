@@ -51,7 +51,7 @@ impl Inode {
         }
     }
 
-    pub fn get_path(&self) -> &OsString {
+    pub fn get_path(&self) -> &OsStr {
         return &self.path;
     }
 
