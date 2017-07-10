@@ -7,6 +7,8 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
 
+use catfs::dir;
+use catfs::file;
 use self::time::Timespec;
 
 #[derive(Clone)]
@@ -111,6 +113,14 @@ impl Inode {
         abs_path.push(&path);
         let attr = Inode::lookup_path(&abs_path)?;
         return Ok(Inode::new(name.to_os_string(), path, attr));
+    }
+
+    pub fn open(&self, relative_to: &OsStr, flags: u32) -> io::Result<file::Handle> {
+        return file::Handle::open(&self.to_absolute(relative_to), flags);
+    }
+
+    pub fn opendir(&self, relative_to: &OsStr) -> io::Result<dir::Handle> {
+        return dir::Handle::open(&self.to_absolute(relative_to));
     }
 
     pub fn use_ino(&mut self, ino: u64) {

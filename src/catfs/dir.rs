@@ -5,7 +5,7 @@ use std::io;
 
 use catfs::rlibc;
 
-pub struct DirHandle {
+pub struct Handle {
     dh: *mut libc::DIR,
     offset: u64,
 }
@@ -13,18 +13,18 @@ pub struct DirHandle {
 // no-op to workaround the fact that we send the entire CatFS at start
 // time, but we never send anything. Could have used Unique but that
 // bounds us to rust nightly
-unsafe impl Send for DirHandle {}
+unsafe impl Send for Handle {}
 
-impl Drop for DirHandle {
+impl Drop for Handle {
     fn drop(&mut self) {
         rlibc::closedir(self.dh);
     }
 }
 
-impl DirHandle {
-    pub fn open(path: &OsStr) -> io::Result<DirHandle> {
+impl Handle {
+    pub fn open(path: &OsStr) -> io::Result<Handle> {
         let dh = rlibc::opendir(path)?;
-        return Ok(DirHandle { dh: dh, offset: 0 });
+        return Ok(Handle { dh: dh, offset: 0 });
     }
 
     pub fn seekdir(&mut self, offset: u64) {

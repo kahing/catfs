@@ -54,28 +54,14 @@ impl InodeStore {
     }
 }
 
-struct DirHandleStore {
-    handles: HashMap<u64, dir::DirHandle>,
+struct HandleStore<T> {
+    handles: HashMap<u64, T>,
     next_id: u64,
 }
 
-impl Default for DirHandleStore {
-    fn default() -> DirHandleStore {
-        return DirHandleStore {
-            handles: Default::default(),
-            next_id: 1,
-        };
-    }
-}
-
-struct FileHandleStore {
-    handles: HashMap<u64, file::FileHandle>,
-    next_id: u64,
-}
-
-impl Default for FileHandleStore {
-    fn default() -> FileHandleStore {
-        return FileHandleStore {
+impl<T> Default for HandleStore<T> {
+    fn default() -> HandleStore<T> {
+        return HandleStore {
             handles: Default::default(),
             next_id: 1,
         };
@@ -88,8 +74,8 @@ pub struct CatFS {
 
     ttl: Timespec,
     store: Mutex<InodeStore>,
-    dh_store: Mutex<DirHandleStore>,
-    fh_store: Mutex<FileHandleStore>,
+    dh_store: Mutex<HandleStore<dir::Handle>>,
+    fh_store: Mutex<HandleStore<file::Handle>>,
 }
 
 impl CatFS {
@@ -178,7 +164,7 @@ impl Filesystem for CatFS {
     fn opendir(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
-        match dir::DirHandle::open(&inode.to_absolute(&self.from)) {
+        match inode.opendir(&self.from) {
             Ok(dir) => {
                 let mut dh_store = self.dh_store.lock().unwrap();
                 let dh = dh_store.next_id;
@@ -241,7 +227,7 @@ impl Filesystem for CatFS {
             // start paging the file in
         }
 
-        match file::FileHandle::open(&inode.to_absolute(&self.from), flags) {
+        match inode.open(&self.from, flags) {
             Ok(file) => {
                 let mut fh_store = self.fh_store.lock().unwrap();
                 let fh = fh_store.next_id;
