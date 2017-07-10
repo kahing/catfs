@@ -233,6 +233,11 @@ impl Filesystem for CatFS {
     fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
+
+        if !file::is_truncate(flags) {
+            // start paging the file in
+        }
+
         match file::FileHandle::open(inode.get_path(), flags) {
             Ok(file) => {
                 let mut fh_store = self.fh_store.lock().unwrap();

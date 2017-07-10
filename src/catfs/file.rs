@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
+use std::os::unix::fs::OpenOptionsExt;
 
 pub struct FileHandle {
     file: File,
@@ -15,11 +16,14 @@ pub struct FileHandle {
 // bounds us to rust nightly
 unsafe impl Send for FileHandle {}
 
+pub fn is_truncate(flags: u32) -> bool {
+    return (flags & (libc::O_TRUNC as u32)) != 0;
+}
+
 impl FileHandle {
     fn flags_to_open_options(flags: i32) -> OpenOptions {
         let mut opt = OpenOptions::new();
-        let access_mode = flags & 0x3; // get the lower 2 bits
-
+        let access_mode = flags & libc::O_ACCMODE;
 
         if access_mode == libc::O_RDONLY {
             opt.read(true);
@@ -29,18 +33,7 @@ impl FileHandle {
             opt.read(true).write(true);
         }
 
-        if (flags & libc::O_APPEND) != 0 {
-            opt.append(true);
-        }
-        if (flags & libc::O_TRUNC) != 0 {
-            opt.truncate(true);
-        }
-        if (flags & libc::O_CREAT) != 0 {
-            opt.create(true);
-        }
-        if (flags & libc::O_EXCL) != 0 {
-            opt.create_new(true);
-        }
+        opt.custom_flags(flags);
 
         return opt;
     }
