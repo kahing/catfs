@@ -1,0 +1,85 @@
+extern crate libc;
+
+use std::ffi::OsStr;
+use std::fs::{File, OpenOptions};
+use std::io;
+use std::io::{Read, Seek, SeekFrom};
+
+pub struct FileHandle {
+    file: File,
+    offset: u64,
+}
+
+// no-op to workaround the fact that we send the entire CatFS at start
+// time, but we never send anything. Could have used Unique but that
+// bounds us to rust nightly
+unsafe impl Send for FileHandle {}
+
+impl FileHandle {
+    fn flags_to_open_options(flags: i32) -> OpenOptions {
+        let mut opt = OpenOptions::new();
+        let access_mode = flags & 0x3; // get the lower 2 bits
+
+
+        if access_mode == libc::O_RDONLY {
+            opt.read(true);
+        } else if access_mode == libc::O_WRONLY {
+            opt.write(true);
+        } else if access_mode == libc::O_RDWR {
+            opt.read(true).write(true);
+        }
+
+        if (flags & libc::O_APPEND) != 0 {
+            opt.append(true);
+        }
+        if (flags & libc::O_TRUNC) != 0 {
+            opt.truncate(true);
+        }
+        if (flags & libc::O_CREAT) != 0 {
+            opt.create(true);
+        }
+        if (flags & libc::O_EXCL) != 0 {
+            opt.create_new(true);
+        }
+
+        return opt;
+    }
+
+    pub fn open(path: &OsStr, flags: u32) -> io::Result<FileHandle> {
+        let opt = FileHandle::flags_to_open_options(flags as i32);
+        let fh = opt.open(path)?;
+        return Ok(FileHandle {
+            file: fh,
+            offset: 0,
+        });
+    }
+
+    pub fn read(&mut self, offset: u64, buf: &mut Vec<u8>) -> io::Result<usize> {
+        if self.offset != offset {
+            self.offset = self.file.seek(SeekFrom::Start(offset))?;
+        }
+
+        let nwant = buf.len();
+        let mut bytes_read: usize = 0;
+
+        while bytes_read < nwant {
+            match self.file.read(&mut buf[bytes_read..]) {
+                Ok(nread) => {
+                    if nread == 0 {
+                        return Ok(bytes_read);
+                    }
+                    bytes_read += nread;
+                }
+                Err(e) => {
+                    if bytes_read > 0 {
+                        return Ok(bytes_read);
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        return Ok(bytes_read);
+    }
+}

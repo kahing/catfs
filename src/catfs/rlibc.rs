@@ -2,7 +2,6 @@ extern crate fuse;
 extern crate libc;
 
 use std::slice;
-use std::ffi::CString;
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::io;
@@ -10,7 +9,7 @@ use fuse::FileType;
 
 pub fn opendir(path: &OsStr) -> io::Result<*mut libc::DIR> {
     unsafe {
-        let mut dh = libc::opendir(path.as_bytes().as_ptr() as *const libc::c_char);
+        let dh = libc::opendir(path.as_bytes().as_ptr() as *const libc::c_char);
         if dh.is_null() {
             return Err(io::Error::last_os_error());
         } else {
@@ -34,7 +33,7 @@ pub fn seekdir(dir: *mut libc::DIR, loc: u64) {
     }
 }
 
-pub struct dirent {
+pub struct Dirent {
     en: libc::dirent,
 }
 
@@ -45,7 +44,7 @@ fn array_to_osstring(cslice: &[libc::c_char]) -> OsString {
 }
 
 
-impl dirent {
+impl Dirent {
     pub fn ino(&self) -> u64 {
         return self.en.d_ino;
     }
@@ -67,7 +66,7 @@ impl dirent {
     }
 }
 
-pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<dirent>> {
+pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<Dirent>> {
     let mut entry: libc::dirent = libc::dirent {
         d_ino: 0,
         d_off: 0,
@@ -76,7 +75,7 @@ pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<dirent>> {
         d_name: [0i8; 256], // FIXME: don't hardcode 256
     };
     let mut entry_p: *mut libc::dirent = &mut entry;
-    let mut entry_pp: *mut *mut libc::dirent = &mut entry_p;
+    let entry_pp: *mut *mut libc::dirent = &mut entry_p;
 
     unsafe {
         let err = libc::readdir_r(dir, entry_p, entry_pp);
@@ -84,7 +83,7 @@ pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<dirent>> {
             if (*entry_pp).is_null() {
                 return Ok(None);
             } else {
-                return Ok(Some(dirent { en: entry }));
+                return Ok(Some(Dirent { en: entry }));
             }
         } else {
             return Err(io::Error::last_os_error());

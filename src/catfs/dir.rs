@@ -1,11 +1,7 @@
-#![feature(unique)]
-
 extern crate libc;
 
 use std::ffi::OsStr;
-use std::fs;
 use std::io;
-use std::ptr;
 
 use catfs::rlibc;
 
@@ -38,7 +34,7 @@ impl DirHandle {
         }
     }
 
-    pub fn readdir(&mut self) -> io::Result<Option<rlibc::dirent>> {
+    pub fn readdir(&mut self) -> io::Result<Option<rlibc::Dirent>> {
         match rlibc::readdir(self.dh)? {
             Some(entry) => {
                 self.offset = entry.off();

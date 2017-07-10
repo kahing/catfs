@@ -2,7 +2,8 @@ extern crate fuse;
 extern crate libc;
 extern crate time;
 
-use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty, ReplyDirectory};
+use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty,
+                 ReplyDirectory, ReplyData};
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -14,6 +15,7 @@ use std::sync::Mutex;
 use self::time::Timespec;
 
 mod dir;
+mod file;
 mod inode;
 mod rlibc;
 
@@ -66,6 +68,20 @@ impl Default for DirHandleStore {
     }
 }
 
+struct FileHandleStore {
+    handles: HashMap<u64, file::FileHandle>,
+    next_id: u64,
+}
+
+impl Default for FileHandleStore {
+    fn default() -> FileHandleStore {
+        return FileHandleStore {
+            handles: Default::default(),
+            next_id: 1,
+        };
+    }
+}
+
 pub struct CatFS {
     from: OsString,
     cache: OsString,
@@ -73,6 +89,7 @@ pub struct CatFS {
     ttl: Timespec,
     store: Mutex<InodeStore>,
     dh_store: Mutex<DirHandleStore>,
+    fh_store: Mutex<FileHandleStore>,
 }
 
 impl CatFS {
@@ -83,6 +100,7 @@ impl CatFS {
             ttl: Timespec { sec: 0, nsec: 0 },
             store: Mutex::new(Default::default()),
             dh_store: Mutex::new(Default::default()),
+            fh_store: Mutex::new(Default::default()),
         };
 
         let root_attr = Inode::lookup_path(from)?;
@@ -207,7 +225,61 @@ impl Filesystem for CatFS {
 
     fn releasedir(&mut self, _req: &Request, _ino: u64, dh: u64, _flags: u32, reply: ReplyEmpty) {
         let mut dh_store = self.dh_store.lock().unwrap();
+        // the handle will be destroyed and closed
         dh_store.handles.remove(&dh);
+        reply.ok();
+    }
+
+    fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+        let store = self.store.lock().unwrap();
+        let inode = store.get(ino);
+        match file::FileHandle::open(inode.get_path(), flags) {
+            Ok(file) => {
+                let mut fh_store = self.fh_store.lock().unwrap();
+                let fh = fh_store.next_id;
+                fh_store.next_id += 1;
+                fh_store.handles.insert(fh, file);
+                reply.opened(fh, flags);
+            }
+            Err(e) => reply.error(e.raw_os_error().unwrap()),
+        }
+    }
+
+    fn read(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        fh: u64,
+        offset: u64,
+        size: u32,
+        reply: ReplyData,
+    ) {
+        let mut fh_store = self.fh_store.lock().unwrap();
+        let mut file = fh_store.handles.get_mut(&fh).unwrap();
+        // TODO spawn a thread
+        let mut buf: Vec<u8> = Vec::with_capacity(size as usize);
+        buf.resize(size as usize, 0u8);
+        match file.read(offset, &mut buf) {
+            Ok(nread) => {
+                reply.data(&buf[..nread]);
+            }
+            Err(e) => reply.error(e.raw_os_error().unwrap()),
+        }
+    }
+
+    fn release(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        fh: u64,
+        _flags: u32,
+        _lock_owner: u64,
+        _flush: bool,
+        reply: ReplyEmpty,
+    ) {
+        let mut fh_store = self.fh_store.lock().unwrap();
+        // the handle will be destroyed and closed
+        fh_store.handles.remove(&fh);
         reply.ok();
     }
 }
