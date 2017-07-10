@@ -64,6 +64,7 @@ impl Inode {
     }
 
     pub fn lookup_path(path: &OsStr) -> io::Result<fuse::FileAttr> {
+        // misnomer as symlink_metadata is the one that does NOT follow symlinks
         let m = fs::symlink_metadata(path)?;
         let attr = fuse::FileAttr {
             ino: m.ino(),
@@ -96,10 +97,19 @@ impl Inode {
         return Ok(attr);
     }
 
-    pub fn lookup(&self, name: &OsStr) -> io::Result<Inode> {
+    pub fn to_absolute(&self, relative_to: &OsStr) -> OsString {
+        let mut path = relative_to.to_os_string();
+        path.push("/");
+        path.push(&self.path);
+        return path;
+    }
+
+    pub fn lookup(&self, name: &OsStr, relative_to: &OsStr) -> io::Result<Inode> {
         let path = self.get_child_name(name);
-        // misnomer as symlink_metadata is the one that does NOT follow symlinks
-        let attr = Inode::lookup_path(&path)?;
+        let mut abs_path = relative_to.to_os_string();
+        abs_path.push("/");
+        abs_path.push(&path);
+        let attr = Inode::lookup_path(&abs_path)?;
         return Ok(Inode::new(name.to_os_string(), path, attr));
     }
 

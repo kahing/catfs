@@ -104,21 +104,24 @@ impl CatFS {
         };
 
         let root_attr = Inode::lookup_path(from)?;
-        let mut inode = Inode::new(OsString::new(), to.to_os_string(), root_attr);
+        let mut inode = Inode::new(OsString::new(), OsString::new(), root_attr);
         inode.use_ino(fuse::FUSE_ROOT_ID);
 
-        catfs.insert_inode(inode.get_path().to_os_string(), Arc::new(inode));
+        catfs.insert_inode(Arc::new(inode));
 
         return Ok(catfs);
     }
 }
 
 impl CatFS {
-    fn insert_inode(&mut self, path: OsString, inode: Arc<Inode>) {
+    fn insert_inode(&mut self, inode: Arc<Inode>) {
         let mut store = self.store.lock().unwrap();
         let attr = inode.get_attr();
         store.inodes.insert(attr.ino, inode.clone());
-        store.inodes_cache.insert(path, attr.ino);
+        store.inodes_cache.insert(
+            inode.get_path().to_os_string(),
+            attr.ino,
+        );
     }
 }
 
@@ -139,11 +142,11 @@ impl Filesystem for CatFS {
         }
 
         // TODO spawn a thread to do lookup
-        match parent_inode.lookup(name) {
+        match parent_inode.lookup(name, &self.from) {
             Ok(inode) => {
                 let inode = Arc::new(inode);
                 reply.entry(&self.ttl, &inode.get_attr(), 0);
-                self.insert_inode(inode.get_path().to_os_string(), inode);
+                self.insert_inode(inode);
                 debug!("<-- lookup {} {:?}", parent, name);
             }
             Err(e) => {
@@ -175,7 +178,7 @@ impl Filesystem for CatFS {
     fn opendir(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
-        match dir::DirHandle::open(inode.get_path()) {
+        match dir::DirHandle::open(&inode.to_absolute(&self.from)) {
             Ok(dir) => {
                 let mut dh_store = self.dh_store.lock().unwrap();
                 let dh = dh_store.next_id;
@@ -238,7 +241,7 @@ impl Filesystem for CatFS {
             // start paging the file in
         }
 
-        match file::FileHandle::open(inode.get_path(), flags) {
+        match file::FileHandle::open(&inode.to_absolute(&self.from), flags) {
             Ok(file) => {
                 let mut fh_store = self.fh_store.lock().unwrap();
                 let fh = fh_store.next_id;
