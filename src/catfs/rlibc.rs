@@ -5,7 +5,7 @@ use std::slice;
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::io;
-use fuse::FileType;
+use self::fuse::FileType;
 
 pub fn opendir(path: &OsStr) -> io::Result<*mut libc::DIR> {
     unsafe {

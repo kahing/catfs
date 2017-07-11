@@ -225,6 +225,11 @@ impl Filesystem for CatFS {
 
         if !file::is_truncate(flags) {
             // start paging the file in
+            // TODO do this in background and ensure only one copy is done
+            if let Err(e) = inode.cache(&self.from, &self.cache) {
+                reply.error(e.raw_os_error().unwrap());
+                return;
+            }
         }
 
         match inode.open(&self.from, flags) {

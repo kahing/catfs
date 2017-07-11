@@ -6,6 +6,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
+use std::fs::OpenOptions;
+use std::os::unix::fs::OpenOptionsExt;
 
 use catfs::dir;
 use catfs::file;
@@ -61,10 +63,6 @@ impl Inode {
         return &self.attr;
     }
 
-    pub fn get_ino(&self) -> u64 {
-        return self.attr.ino;
-    }
-
     pub fn lookup_path(path: &OsStr) -> io::Result<fuse::FileAttr> {
         // misnomer as symlink_metadata is the one that does NOT follow symlinks
         let m = fs::symlink_metadata(path)?;
@@ -116,11 +114,33 @@ impl Inode {
     }
 
     pub fn open(&self, relative_to: &OsStr, flags: u32) -> io::Result<file::Handle> {
-        return file::Handle::open(&self.to_absolute(relative_to), flags);
+        return file::Handle::open_as(&self.to_absolute(relative_to), flags);
     }
 
     pub fn opendir(&self, relative_to: &OsStr) -> io::Result<dir::Handle> {
         return dir::Handle::open(&self.to_absolute(relative_to));
+    }
+
+    pub fn cache(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
+        let mut rh = file::Handle::open_rdonly(&self.to_absolute(from))?;
+        let cache_path = self.to_absolute(to);
+        fs::remove_file(&cache_path)?;
+
+        let mut opt = OpenOptions::new();
+        opt.write(true).create_new(true).mode(self.attr.perm as u32);
+        let mut wh = file::Handle::open(&cache_path, &opt)?;
+        let mut buf = [0u8; 32 * 1024];
+        let mut offset = 0;
+        loop {
+            let nread = rh.read(offset, &mut buf)?;
+            if nread == 0 {
+                break;
+            }
+            offset += nread as u64;
+            wh.write(offset, &mut buf)?;
+        }
+
+        return Ok(());
     }
 
     pub fn use_ino(&mut self, ino: u64) {
