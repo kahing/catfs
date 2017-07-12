@@ -8,10 +8,10 @@ use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmp
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
-use std::fs;
 use std::io;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::path::{Path, PathBuf};
 
 use self::time::Timespec;
 
@@ -25,7 +25,7 @@ use self::inode::Inode;
 #[derive(Default)]
 struct InodeStore {
     inodes: HashMap<u64, Arc<Inode>>,
-    inodes_cache: HashMap<OsString, u64>,
+    inodes_cache: HashMap<PathBuf, u64>,
 }
 
 impl InodeStore {
@@ -37,7 +37,7 @@ impl InodeStore {
         return self.inodes.get_mut(&ino).unwrap();
     }
 
-    fn get_mut_by_path(&mut self, path: &OsStr) -> Option<&mut Arc<Inode>> {
+    fn get_mut_by_path(&mut self, path: &Path) -> Option<&mut Arc<Inode>> {
         let ino: u64;
 
         if let Some(ino_ref) = self.inodes_cache.get(path) {
@@ -70,8 +70,8 @@ impl<T> Default for HandleStore<T> {
 }
 
 pub struct CatFS {
-    from: OsString,
-    cache: OsString,
+    from: PathBuf,
+    cache: PathBuf,
 
     ttl: Timespec,
     store: Mutex<InodeStore>,
@@ -79,15 +79,11 @@ pub struct CatFS {
     fh_store: Mutex<HandleStore<file::Handle>>,
 }
 
-fn to_abs(from: &OsStr) -> io::Result<OsString> {
-    return Ok(fs::canonicalize(from)?.into_os_string());
-}
-
 impl CatFS {
-    pub fn new(from: &OsStr, to: &OsStr) -> io::Result<CatFS> {
+    pub fn new(from: &AsRef<Path>, to: &AsRef<Path>) -> io::Result<CatFS> {
         let mut catfs = CatFS {
-            from: to_abs(from)?,
-            cache: to_abs(to)?,
+            from: from.as_ref().canonicalize()?,
+            cache: to.as_ref().canonicalize()?,
             ttl: Timespec { sec: 0, nsec: 0 },
             store: Mutex::new(Default::default()),
             dh_store: Mutex::new(Default::default()),
@@ -95,7 +91,7 @@ impl CatFS {
         };
 
         let root_attr = Inode::lookup_path(from)?;
-        let mut inode = Inode::new(OsString::new(), OsString::new(), root_attr);
+        let mut inode = Inode::new(OsString::new(), PathBuf::new(), root_attr);
         inode.use_ino(fuse::FUSE_ROOT_ID);
 
         catfs.insert_inode(Arc::new(inode));
@@ -112,7 +108,7 @@ impl CatFS {
         let attr = inode.get_attr();
         store.inodes.insert(attr.ino, inode.clone());
         store.inodes_cache.insert(
-            inode.get_path().to_os_string(),
+            inode.get_path().to_path_buf(),
             attr.ino,
         );
     }

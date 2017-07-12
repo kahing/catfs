@@ -5,13 +5,14 @@ use std::ffi::{CStr, CString, OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::io;
 use self::fuse::FileType;
+use std::path::Path;
 
-pub fn to_cstring(path: &OsStr) -> CString {
-    let bytes = path.to_os_string().into_vec();
+pub fn to_cstring(path: &AsRef<Path>) -> CString {
+    let bytes = path.as_ref().as_os_str().to_os_string().into_vec();
     return CString::new(bytes).unwrap();
 }
 
-pub fn opendir(path: &OsStr) -> io::Result<*mut libc::DIR> {
+pub fn opendir(path: &AsRef<Path>) -> io::Result<*mut libc::DIR> {
     let s = to_cstring(path);
     let dh = unsafe { libc::opendir(s.as_ptr()) };
     if dh.is_null() {

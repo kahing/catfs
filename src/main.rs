@@ -76,7 +76,7 @@ fn main() {
     }
 
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-    match catfs::CatFS::new(flags.cat_from.as_os_str(), flags.cat_to.as_os_str()) {
+    match catfs::CatFS::new(&flags.cat_from, &flags.cat_to) {
         Ok(catfs) => {
             unsafe {
                 let res = fuse::spawn_mount(catfs, &flags.mount_point, &[]);

@@ -8,7 +8,7 @@ use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use catfs::dir;
@@ -18,7 +18,7 @@ use self::time::Timespec;
 #[derive(Clone)]
 pub struct Inode {
     name: OsString,
-    path: OsString,
+    path: PathBuf,
 
     attr: fuse::FileAttr,
 
@@ -46,7 +46,7 @@ fn now() -> Timespec {
 }
 
 impl Inode {
-    pub fn new(name: OsString, path: OsString, attr: fuse::FileAttr) -> Inode {
+    pub fn new(name: OsString, path: PathBuf, attr: fuse::FileAttr) -> Inode {
         return Inode {
             name: name,
             path: path,
@@ -55,18 +55,13 @@ impl Inode {
         };
     }
 
-    pub fn get_child_name(&self, name: &OsStr) -> OsString {
-        if self.attr.ino == fuse::FUSE_ROOT_ID {
-            return name.to_os_string();
-        } else {
-            let mut s = self.path.clone();
-            s.push("/");
-            s.push(name);
-            return s;
-        }
+    pub fn get_child_name(&self, name: &OsStr) -> PathBuf {
+        let mut path = self.path.clone();
+        path.push(name);
+        return path;
     }
 
-    pub fn get_path(&self) -> &OsStr {
+    pub fn get_path(&self) -> &Path {
         return &self.path;
     }
 
@@ -78,8 +73,7 @@ impl Inode {
         return self.attr.kind;
     }
 
-    pub fn lookup_path(path: &OsStr) -> io::Result<fuse::FileAttr> {
-        debug!("lookup_path {:?}", path);
+    pub fn lookup_path(path: &AsRef<Path>) -> io::Result<fuse::FileAttr> {
         // misnomer as symlink_metadata is the one that does NOT follow symlinks
         let m = fs::symlink_metadata(path)?;
         let attr = fuse::FileAttr {
@@ -113,18 +107,9 @@ impl Inode {
         return Ok(attr);
     }
 
-    pub fn to_absolute(&self, relative_to: &OsStr) -> OsString {
-        let mut path = relative_to.to_os_string();
-        path.push("/");
-        path.push(&self.path);
-        return path;
-    }
-
-    pub fn lookup(&self, name: &OsStr, relative_to: &OsStr) -> io::Result<Inode> {
+    pub fn lookup(&self, name: &OsStr, relative_to: &AsRef<Path>) -> io::Result<Inode> {
         let path = self.get_child_name(name);
-        let mut abs_path = relative_to.to_os_string();
-        abs_path.push("/");
-        abs_path.push(&path);
+        let abs_path = relative_to.as_ref().join(&path);
         let attr = Inode::lookup_path(&abs_path)?;
         return Ok(Inode::new(name.to_os_string(), path, attr));
     }
@@ -132,14 +117,12 @@ impl Inode {
     pub fn create(
         &self,
         name: &OsStr,
-        relative_to: &OsStr,
+        relative_to: &AsRef<Path>,
         mode: u32,
     ) -> io::Result<(Inode, file::Handle)> {
         let path = self.get_child_name(name);
 
-        let mut cache_path = relative_to.to_os_string();
-        cache_path.push("/");
-        cache_path.push(&path);
+        let cache_path = relative_to.as_ref().join(&path);
 
         let mut opt = OpenOptions::new();
         opt.write(true).create_new(true).mode(mode as u32);
@@ -151,17 +134,17 @@ impl Inode {
         return Ok((inode, wh));
     }
 
-    pub fn open(&self, relative_to: &OsStr, flags: u32) -> io::Result<file::Handle> {
-        return file::Handle::open_as(&self.to_absolute(relative_to), flags);
+    pub fn open(&self, relative_to: &AsRef<Path>, flags: u32) -> io::Result<file::Handle> {
+        return file::Handle::open_as(&relative_to.as_ref().join(&self.path), flags);
     }
 
-    pub fn opendir(&self, relative_to: &OsStr) -> io::Result<dir::Handle> {
-        return dir::Handle::open(&self.to_absolute(relative_to));
+    pub fn opendir(&self, relative_to: &AsRef<Path>) -> io::Result<dir::Handle> {
+        return dir::Handle::open(&relative_to.as_ref().join(&self.path));
     }
 
-    pub fn cache(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
-        let mut rh = file::Handle::open_rdonly(&self.to_absolute(from))?;
-        let cache_path = self.to_absolute(to);
+    pub fn cache(&self, from: &AsRef<Path>, to: &AsRef<Path>) -> io::Result<()> {
+        let mut rh = file::Handle::open_rdonly(&from.as_ref().join(&self.path))?;
+        let cache_path = to.as_ref().join(&self.path);
 
         // don't check for error, if this fails then create_new will fail too
         if let Err(e) = fs::remove_file(&cache_path) {

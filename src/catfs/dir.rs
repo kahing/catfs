@@ -1,7 +1,7 @@
 extern crate libc;
 
-use std::ffi::OsStr;
 use std::io;
+use std::path::Path;
 
 use catfs::rlibc;
 
@@ -24,8 +24,7 @@ impl Drop for Handle {
 }
 
 impl Handle {
-    pub fn open(path: &OsStr) -> io::Result<Handle> {
-        debug!("opendir {:?}", path);
+    pub fn open(path: &AsRef<Path>) -> io::Result<Handle> {
         let dh = rlibc::opendir(path)?;
         return Ok(Handle { dh: dh, offset: 0 });
     }

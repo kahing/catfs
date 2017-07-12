@@ -7,14 +7,13 @@ extern crate rand;
 extern crate fuse;
 
 use std::env;
-use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::Result;
-use std::path::Path;
 use std::process::Command;
 use rand::{thread_rng, Rng};
+use std::path::{Path, PathBuf};
 
 use catfs::CatFS;
 
@@ -30,18 +29,17 @@ trait Fixture {
 }
 
 struct CatFSTests<'a> {
-    prefix: OsString,
-    mnt: OsString,
+    prefix: PathBuf,
+    mnt: PathBuf,
     session: fuse::BackgroundSession<'a>,
 }
 
-fn copy_all(dir1: &Path, dir2: &Path) -> io::Result<()> {
+fn copy_all(dir1: &AsRef<Path>, dir2: &AsRef<Path>) -> io::Result<()> {
     fs::create_dir(dir2)?;
 
     for entry in fs::read_dir(dir1)? {
         let entry = entry?;
-        let mut to = dir2.to_path_buf();
-        to.push(entry.file_name());
+        let to = dir2.as_ref().join(entry.file_name());
 
         if entry.file_type()?.is_dir() {
             copy_all(&entry.path(), &to)?;
@@ -54,17 +52,13 @@ fn copy_all(dir1: &Path, dir2: &Path) -> io::Result<()> {
 }
 
 impl<'a> CatFSTests<'a> {
-    fn get_orig_dir() -> OsString {
+    fn get_orig_dir() -> PathBuf {
         let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
-        let mut test_resource_dir = manifest.clone();
-        test_resource_dir.push("/tests/resources");
-        return test_resource_dir;
+        return PathBuf::from(manifest).join("tests/resources");
     }
 
-    fn get_from(&self) -> OsString {
-        let mut from = self.prefix.clone();
-        from.push("/resources");
-        return from;
+    fn get_from(&self) -> PathBuf {
+        return self.prefix.join("resources");
     }
 }
 
@@ -73,20 +67,17 @@ impl<'a> Fixture for CatFSTests<'a> {
         env_logger::init();
 
         let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
-        let mut prefix = manifest.clone();
-        prefix.push("/target/test/");
-        prefix.push(thread_rng().gen_ascii_chars().take(10).collect::<String>());
-        let mut mnt = prefix.clone();
-        mnt.push("/mnt");
-        let mut resources = prefix.clone();
-        resources.push("/resources");
-        let mut cache = prefix.clone();
-        cache.push("/cache");
+        let prefix = PathBuf::from(manifest).join("target/test").join(
+            thread_rng().gen_ascii_chars().take(10).collect::<String>(),
+        );
+        let mnt = prefix.join("mnt");
+        let resources = prefix.join("resources");
+        let cache = prefix.join("cache");
 
         fs::create_dir_all(&mnt)?;
         fs::create_dir_all(&cache)?;
 
-        copy_all(CatFSTests::get_orig_dir().as_ref(), resources.as_ref())?;
+        copy_all(&CatFSTests::get_orig_dir(), &resources)?;
 
         let fs = CatFS::new(&resources, &cache)?;
 
@@ -112,11 +103,11 @@ impl<'a> Fixture for CatFSTests<'a> {
     }
 }
 
-fn diff(dir1: &OsStr, dir2: &OsStr) {
+fn diff(dir1: &AsRef<Path>, dir2: &AsRef<Path>) {
     let status = Command::new("diff")
         .arg("-r")
-        .arg(dir1)
-        .arg(dir2)
+        .arg(dir1.as_ref().as_os_str())
+        .arg(dir2.as_ref().as_os_str())
         .status()
         .expect("failed to execute `diff'");
     assert!(status.success());
