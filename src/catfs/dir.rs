@@ -17,7 +17,9 @@ unsafe impl Send for Handle {}
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        rlibc::closedir(self.dh);
+        if let Err(e) = rlibc::closedir(self.dh) {
+            error!("!closedir {:?} = {}", self.dh, e);
+        }
     }
 }
 

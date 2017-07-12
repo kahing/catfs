@@ -86,7 +86,7 @@ impl Handle {
         return Ok(bytes_read);
     }
 
-    pub fn write(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+    pub fn write(&mut self, offset: u64, buf: &[u8]) -> io::Result<usize> {
         if self.offset != offset {
             self.offset = self.file.seek(SeekFrom::Start(offset))?;
         }
@@ -95,7 +95,7 @@ impl Handle {
         let mut bytes_written: usize = 0;
 
         while bytes_written < nwant {
-            match self.file.write(&mut buf[bytes_written..]) {
+            match self.file.write(&buf[bytes_written..]) {
                 Ok(nwritten) => {
                     if nwritten == 0 {
                         return Ok(bytes_written);
@@ -113,5 +113,9 @@ impl Handle {
         }
 
         return Ok(bytes_written);
+    }
+
+    pub fn flush(&mut self) -> io::Result<()> {
+        return self.file.flush();
     }
 }

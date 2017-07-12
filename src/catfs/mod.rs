@@ -3,7 +3,7 @@ extern crate libc;
 extern crate time;
 
 use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty,
-                 ReplyDirectory, ReplyData};
+                 ReplyDirectory, ReplyData, ReplyWrite, ReplyCreate};
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -284,6 +284,80 @@ impl Filesystem for CatFS {
         match file.read(offset, &mut buf) {
             Ok(nread) => {
                 reply.data(&buf[..nread]);
+            }
+            Err(e) => reply.error(e.raw_os_error().unwrap()),
+        }
+    }
+
+    fn create(
+        &mut self,
+        _req: &Request,
+        parent: u64,
+        name: &OsStr,
+        mode: u32,
+        flags: u32,
+        reply: ReplyCreate,
+    ) {
+        let parent_inode: Arc<Inode>;
+        {
+            let store = self.store.lock().unwrap();
+            parent_inode = store.get(parent).clone();
+        }
+
+        match parent_inode.create(name, &self.cache, mode) {
+            Ok((inode, file)) => {
+                let fh: u64;
+                {
+                    let mut fh_store = self.fh_store.lock().unwrap();
+                    fh = fh_store.next_id;
+                    fh_store.next_id += 1;
+                    fh_store.handles.insert(fh, file);
+                }
+
+                let inode = Arc::new(inode);
+                reply.created(&self.ttl, &inode.get_attr(), 0, fh, flags);
+                debug!("<-- create {:?} = {}", inode.get_path(), fh);
+                self.insert_inode(inode);
+            }
+            Err(e) => {
+                debug!(
+                    "<-- !create {:?} = {}",
+                    parent_inode.get_child_name(name),
+                    e
+                );
+                reply.error(e.raw_os_error().unwrap());
+            }
+        }
+    }
+
+    fn write(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        fh: u64,
+        offset: u64,
+        data: &[u8],
+        _flags: u32,
+        reply: ReplyWrite,
+    ) {
+        let mut fh_store = self.fh_store.lock().unwrap();
+        let mut file = fh_store.handles.get_mut(&fh).unwrap();
+        // TODO spawn a thread
+        match file.write(offset, data) {
+            Ok(nwritten) => {
+                reply.written(nwritten as u32);
+            }
+            Err(e) => reply.error(e.raw_os_error().unwrap()),
+        }
+    }
+
+    fn flush(&mut self, _req: &Request, _ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
+        let mut fh_store = self.fh_store.lock().unwrap();
+        let mut file = fh_store.handles.get_mut(&fh).unwrap();
+        // TODO spawn a thread
+        match file.flush() {
+            Ok(_) => {
+                reply.ok();
             }
             Err(e) => reply.error(e.raw_os_error().unwrap()),
         }

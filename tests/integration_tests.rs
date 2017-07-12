@@ -1,23 +1,3 @@
-// copied from https://users.rust-lang.org/t/why-does-rust-test-framework-lack-fixtures-and-mocking/5622/21
-macro_rules! unit_tests {
-    ($( fn $name:ident($fixt:ident : &$ftype:ty) $body:block )*) => (
-        $(
-            #[test]
-            fn $name() {
-                match <$ftype as Fixture>::setup() {
-                    Ok($fixt) => {
-                        $body
-                        if let Err(e) = $fixt.teardown() {
-                            panic!("teardown failed: {}", e);
-                        }
-                    },
-                    Err(e) => panic!("setup failed: {}", e),
-                }
-            }
-        )*
-    )
-}
-
 #[allow(unused_imports)]
 #[macro_use]
 extern crate log;
@@ -29,6 +9,7 @@ extern crate fuse;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::fs::OpenOptions;
 use std::io;
 use std::io::Result;
 use std::path::Path;
@@ -37,8 +18,14 @@ use rand::{thread_rng, Rng};
 
 use catfs::CatFS;
 
+#[macro_use]
+mod test_suite;
+
+
 trait Fixture {
-    fn setup() -> Result<Self> where Self: std::marker::Sized;
+    fn setup() -> Result<Self>
+    where
+        Self: std::marker::Sized;
     fn teardown(self) -> Result<()>;
 }
 
@@ -66,19 +53,24 @@ fn copy_all(dir1: &Path, dir2: &Path) -> io::Result<()> {
     return Ok(());
 }
 
-fn get_test_resource_dir() -> OsString {
-    let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
-    let mut test_resource_dir = manifest.clone();
-    test_resource_dir.push("/tests/resources");
-    return test_resource_dir;
-}
-
 impl<'a> CatFSTests<'a> {
+    fn get_orig_dir() -> OsString {
+        let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
+        let mut test_resource_dir = manifest.clone();
+        test_resource_dir.push("/tests/resources");
+        return test_resource_dir;
+    }
+
+    fn get_from(&self) -> OsString {
+        let mut from = self.prefix.clone();
+        from.push("/resources");
+        return from;
+    }
 }
 
 impl<'a> Fixture for CatFSTests<'a> {
     fn setup() -> Result<CatFSTests<'a>> {
-        env_logger::init().unwrap();
+        env_logger::init();
 
         let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
         let mut prefix = manifest.clone();
@@ -94,7 +86,7 @@ impl<'a> Fixture for CatFSTests<'a> {
         fs::create_dir_all(&mnt)?;
         fs::create_dir_all(&cache)?;
 
-        copy_all(get_test_resource_dir().as_ref(), resources.as_ref())?;
+        copy_all(CatFSTests::get_orig_dir().as_ref(), resources.as_ref())?;
 
         let fs = CatFS::new(&resources, &cache)?;
 
@@ -122,13 +114,22 @@ impl<'a> Fixture for CatFSTests<'a> {
 
 fn diff(dir1: &OsStr, dir2: &OsStr) {
     let status = Command::new("diff")
-        .arg("-r").arg(dir1).arg(dir2)
-        .status().expect("failed to execute `diff'");
+        .arg("-r")
+        .arg(dir1)
+        .arg(dir2)
+        .status()
+        .expect("failed to execute `diff'");
     assert!(status.success());
 }
 
 unit_tests!{
     fn read_all(f: &CatFSTests) {
-        diff(&get_test_resource_dir(), &f.mnt);
+        diff(&CatFSTests::get_orig_dir(), &f.mnt);
+    }
+
+    fn create(f: &CatFSTests) {
+        let mut fh = OpenOptions::new().write(true).create(true)
+            .open(Path::new(&f.mnt).join("foo")).unwrap();
+        //fs::symlink_metadata(&f.get_from()).unwrap();
     }
 }

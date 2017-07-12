@@ -9,6 +9,7 @@ use std::os::unix::fs::MetadataExt;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use catfs::dir;
 use catfs::file;
@@ -34,6 +35,15 @@ fn to_filetype(t: fs::FileType) -> fuse::FileType {
     }
 }
 
+
+#[allow(dead_code)]
+fn now() -> Timespec {
+    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    return Timespec {
+        sec: d.as_secs() as i64,
+        nsec: d.subsec_nanos() as i32,
+    };
+}
 
 impl Inode {
     pub fn new(name: OsString, path: OsString, attr: fuse::FileAttr) -> Inode {
@@ -117,6 +127,28 @@ impl Inode {
         abs_path.push(&path);
         let attr = Inode::lookup_path(&abs_path)?;
         return Ok(Inode::new(name.to_os_string(), path, attr));
+    }
+
+    pub fn create(
+        &self,
+        name: &OsStr,
+        relative_to: &OsStr,
+        mode: u32,
+    ) -> io::Result<(Inode, file::Handle)> {
+        let path = self.get_child_name(name);
+
+        let mut cache_path = relative_to.to_os_string();
+        cache_path.push("/");
+        cache_path.push(&path);
+
+        let mut opt = OpenOptions::new();
+        opt.write(true).create_new(true).mode(mode as u32);
+        let wh = file::Handle::open(&cache_path, &opt)?;
+
+        let attr = Inode::lookup_path(&cache_path)?;
+        let inode = Inode::new(name.to_os_string(), path, attr);
+
+        return Ok((inode, wh));
     }
 
     pub fn open(&self, relative_to: &OsStr, flags: u32) -> io::Result<file::Handle> {
