@@ -23,6 +23,7 @@ impl Drop for Handle {
 
 impl Handle {
     pub fn open(path: &OsStr) -> io::Result<Handle> {
+        debug!("opendir {:?}", path);
         let dh = rlibc::opendir(path)?;
         return Ok(Handle { dh: dh, offset: 0 });
     }

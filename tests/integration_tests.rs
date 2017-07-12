@@ -27,11 +27,12 @@ extern crate rand;
 extern crate fuse;
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::io::Result;
 use std::path::Path;
+use std::process::Command;
 use rand::{thread_rng, Rng};
 
 use catfs::CatFS;
@@ -43,6 +44,7 @@ trait Fixture {
 
 struct CatFSTests<'a> {
     prefix: OsString,
+    mnt: OsString,
     session: fuse::BackgroundSession<'a>,
 }
 
@@ -62,6 +64,13 @@ fn copy_all(dir1: &Path, dir2: &Path) -> io::Result<()> {
     }
 
     return Ok(());
+}
+
+fn get_test_resource_dir() -> OsString {
+    let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
+    let mut test_resource_dir = manifest.clone();
+    test_resource_dir.push("/tests/resources");
+    return test_resource_dir;
 }
 
 impl<'a> CatFSTests<'a> {
@@ -85,10 +94,7 @@ impl<'a> Fixture for CatFSTests<'a> {
         fs::create_dir_all(&mnt)?;
         fs::create_dir_all(&cache)?;
 
-        let mut test_resource_dir = manifest.clone();
-        test_resource_dir.push("/tests/resources");
-
-        copy_all(test_resource_dir.as_ref(), resources.as_ref())?;
+        copy_all(get_test_resource_dir().as_ref(), resources.as_ref())?;
 
         let fs = CatFS::new(&resources, &cache)?;
 
@@ -96,6 +102,7 @@ impl<'a> Fixture for CatFSTests<'a> {
 
         let t = CatFSTests {
             prefix: prefix,
+            mnt: mnt,
             session: session,
         };
 
@@ -113,7 +120,15 @@ impl<'a> Fixture for CatFSTests<'a> {
     }
 }
 
+fn diff(dir1: &OsStr, dir2: &OsStr) {
+    let status = Command::new("diff")
+        .arg("-r").arg(dir1).arg(dir2)
+        .status().expect("failed to execute `diff'");
+    assert!(status.success());
+}
+
 unit_tests!{
-    fn some_test_name(f: &CatFSTests) {
+    fn read_all(f: &CatFSTests) {
+        diff(&get_test_resource_dir(), &f.mnt);
     }
 }

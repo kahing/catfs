@@ -8,6 +8,7 @@ use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmp
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
+use std::fs;
 use std::io;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -78,11 +79,15 @@ pub struct CatFS {
     fh_store: Mutex<HandleStore<file::Handle>>,
 }
 
+fn to_abs(from: &OsStr) -> io::Result<OsString> {
+    return Ok(fs::canonicalize(from)?.into_os_string());
+}
+
 impl CatFS {
     pub fn new(from: &OsStr, to: &OsStr) -> io::Result<CatFS> {
         let mut catfs = CatFS {
-            from: from.to_os_string(),
-            cache: to.to_os_string(),
+            from: to_abs(from)?,
+            cache: to_abs(to)?,
             ttl: Timespec { sec: 0, nsec: 0 },
             store: Mutex::new(Default::default()),
             dh_store: Mutex::new(Default::default()),
@@ -94,6 +99,8 @@ impl CatFS {
         inode.use_ino(fuse::FUSE_ROOT_ID);
 
         catfs.insert_inode(Arc::new(inode));
+
+        debug!("catfs {:?} {:?}", catfs.from, catfs.cache);
 
         return Ok(catfs);
     }
@@ -122,7 +129,7 @@ impl Filesystem for CatFS {
             if let Some(ref mut inode) = store.get_mut_by_path(&path) {
                 reply.entry(&self.ttl, inode.get_attr(), 0);
                 Arc::get_mut(inode).unwrap().inc_ref();
-                debug!("<-- lookup {} {:?}", parent, name);
+                debug!("<-- lookup {:?} = {:?}", inode.get_path(), inode.get_kind());
                 return;
             }
         }
@@ -132,10 +139,15 @@ impl Filesystem for CatFS {
             Ok(inode) => {
                 let inode = Arc::new(inode);
                 reply.entry(&self.ttl, &inode.get_attr(), 0);
+                debug!("<-- lookup {:?} = {:?}", inode.get_path(), inode.get_kind());
                 self.insert_inode(inode);
-                debug!("<-- lookup {} {:?}", parent, name);
             }
             Err(e) => {
+                debug!(
+                    "<-- !lookup {:?} = {:?}",
+                    parent_inode.get_child_name(name),
+                    e
+                );
                 reply.error(e.raw_os_error().unwrap());
             }
         }
@@ -164,6 +176,7 @@ impl Filesystem for CatFS {
     fn opendir(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
+
         match inode.opendir(&self.from) {
             Ok(dir) => {
                 let mut dh_store = self.dh_store.lock().unwrap();
@@ -171,8 +184,12 @@ impl Filesystem for CatFS {
                 dh_store.next_id += 1;
                 dh_store.handles.insert(dh, dir);
                 reply.opened(dh, flags);
+                debug!("<-- opendir {:?} = {}", inode.get_path(), dh);
             }
-            Err(e) => reply.error(e.raw_os_error().unwrap()),
+            Err(e) => {
+                debug!("<-- !opendir {:?} = {}", inode.get_path(), e);
+                reply.error(e.raw_os_error().unwrap());
+            }
         }
     }
 
@@ -193,23 +210,24 @@ impl Filesystem for CatFS {
                 Ok(res) => {
                     match res {
                         Some(entry) => {
+                            debug!("<-- readdir {} {:?}", dh, entry.name());
                             if reply.add(entry.ino(), entry.off(), entry.kind(), entry.name()) {
-                                reply.ok();
                                 break;
                             }
                         }
                         None => {
-                            reply.ok();
                             break;
                         }
                     }
                 }
                 Err(e) => {
                     reply.error(e.raw_os_error().unwrap());
-                    break;
+                    return;
                 }
             }
         }
+
+        reply.ok();
     }
 
     fn releasedir(&mut self, _req: &Request, _ino: u64, dh: u64, _flags: u32, reply: ReplyEmpty) {
@@ -227,6 +245,7 @@ impl Filesystem for CatFS {
             // start paging the file in
             // TODO do this in background and ensure only one copy is done
             if let Err(e) = inode.cache(&self.from, &self.cache) {
+                debug!("<-- !open {:?} = {}", inode.get_path(), e);
                 reply.error(e.raw_os_error().unwrap());
                 return;
             }
@@ -239,8 +258,12 @@ impl Filesystem for CatFS {
                 fh_store.next_id += 1;
                 fh_store.handles.insert(fh, file);
                 reply.opened(fh, flags);
+                debug!("<-- open {:?} = {}", inode.get_path(), fh);
             }
-            Err(e) => reply.error(e.raw_os_error().unwrap()),
+            Err(e) => {
+                reply.error(e.raw_os_error().unwrap());
+                debug!("<-- !open {:?} = {}", inode.get_path(), e);
+            }
         }
     }
 

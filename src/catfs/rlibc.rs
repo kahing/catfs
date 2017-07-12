@@ -1,20 +1,23 @@
 extern crate fuse;
 extern crate libc;
 
-use std::slice;
-use std::ffi::{OsStr, OsString};
-use std::os::unix::ffi::OsStrExt;
+use std::ffi::{CStr, CString, OsStr, OsString};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::io;
 use self::fuse::FileType;
 
+pub fn to_cstring(path: &OsStr) -> CString {
+    let bytes = path.to_os_string().into_vec();
+    return CString::new(bytes).unwrap();
+}
+
 pub fn opendir(path: &OsStr) -> io::Result<*mut libc::DIR> {
-    unsafe {
-        let dh = libc::opendir(path.as_bytes().as_ptr() as *const libc::c_char);
-        if dh.is_null() {
-            return Err(io::Error::last_os_error());
-        } else {
-            return Ok(dh);
-        }
+    let s = to_cstring(path);
+    let dh = unsafe { libc::opendir(s.as_ptr()) };
+    if dh.is_null() {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(dh);
     }
 }
 
@@ -38,9 +41,8 @@ pub struct Dirent {
 }
 
 fn array_to_osstring(cslice: &[libc::c_char]) -> OsString {
-    let cdata: *const u8 = cslice.as_ptr() as *const u8;
-    let slice = unsafe { slice::from_raw_parts(cdata, cslice.len()) };
-    return OsStr::from_bytes(slice).to_os_string();
+    let s = unsafe { CStr::from_ptr(cslice.as_ptr()) };
+    return OsStr::from_bytes(s.to_bytes()).to_os_string();
 }
 
 

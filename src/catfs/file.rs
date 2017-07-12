@@ -41,6 +41,7 @@ pub fn flags_to_open_options(flags: i32) -> OpenOptions {
 
 impl Handle {
     pub fn open(path: &OsStr, opt: &OpenOptions) -> io::Result<Handle> {
+        debug!("open {:?}", path);
         return Ok(Handle {
             file: opt.open(path)?,
             offset: 0,

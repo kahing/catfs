@@ -8,6 +8,7 @@ use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 
 use catfs::dir;
 use catfs::file;
@@ -63,7 +64,12 @@ impl Inode {
         return &self.attr;
     }
 
+    pub fn get_kind(&self) -> fuse::FileType {
+        return self.attr.kind;
+    }
+
     pub fn lookup_path(path: &OsStr) -> io::Result<fuse::FileAttr> {
+        debug!("lookup_path {:?}", path);
         // misnomer as symlink_metadata is the one that does NOT follow symlinks
         let m = fs::symlink_metadata(path)?;
         let attr = fuse::FileAttr {
@@ -124,7 +130,16 @@ impl Inode {
     pub fn cache(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
         let mut rh = file::Handle::open_rdonly(&self.to_absolute(from))?;
         let cache_path = self.to_absolute(to);
-        fs::remove_file(&cache_path)?;
+
+        // don't check for error, if this fails then create_new will fail too
+        if let Err(e) = fs::remove_file(&cache_path) {
+            debug!("!remove_file {:?} = {}", cache_path, e);
+        }
+
+        // mkdir the parents
+        if let Some(parent) = Path::new(&cache_path).parent() {
+            fs::create_dir_all(parent)?;
+        }
 
         let mut opt = OpenOptions::new();
         opt.write(true).create_new(true).mode(self.attr.perm as u32);
