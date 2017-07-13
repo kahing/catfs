@@ -119,8 +119,10 @@ unit_tests!{
     }
 
     fn create(f: &CatFSTests) {
-        let mut fh = OpenOptions::new().write(true).create(true)
-            .open(Path::new(&f.mnt).join("foo")).unwrap();
-        //fs::symlink_metadata(&f.get_from()).unwrap();
+        {
+            let mut fh = OpenOptions::new().write(true).create(true)
+                .open(Path::new(&f.mnt).join("foo")).unwrap();
+        }
+        fs::symlink_metadata(f.get_from().join("foo")).unwrap();
     }
 }

@@ -183,7 +183,7 @@ impl Filesystem for CatFS {
                 debug!("<-- opendir {:?} = {}", inode.get_path(), dh);
             }
             Err(e) => {
-                debug!("<-- !opendir {:?} = {}", inode.get_path(), e);
+                error!("<-- !opendir {:?} = {}", inode.get_path(), e);
                 reply.error(e.raw_os_error().unwrap());
             }
         }
@@ -241,7 +241,7 @@ impl Filesystem for CatFS {
             // start paging the file in
             // TODO do this in background and ensure only one copy is done
             if let Err(e) = inode.cache(&self.from, &self.cache) {
-                debug!("<-- !open {:?} = {}", inode.get_path(), e);
+                error!("<-- !open {:?} = {}", inode.get_path(), e);
                 reply.error(e.raw_os_error().unwrap());
                 return;
             }
@@ -258,7 +258,7 @@ impl Filesystem for CatFS {
             }
             Err(e) => {
                 reply.error(e.raw_os_error().unwrap());
-                debug!("<-- !open {:?} = {}", inode.get_path(), e);
+                error!("<-- !open {:?} = {}", inode.get_path(), e);
             }
         }
     }
@@ -316,7 +316,7 @@ impl Filesystem for CatFS {
                 self.insert_inode(inode);
             }
             Err(e) => {
-                debug!(
+                error!(
                     "<-- !create {:?} = {}",
                     parent_inode.get_child_name(name),
                     e
@@ -347,13 +347,23 @@ impl Filesystem for CatFS {
         }
     }
 
-    fn flush(&mut self, _req: &Request, _ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
+    fn flush(&mut self, _req: &Request, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         let mut fh_store = self.fh_store.lock().unwrap();
         let mut file = fh_store.handles.get_mut(&fh).unwrap();
         // TODO spawn a thread
+
+        // first flush locally
         match file.flush() {
             Ok(_) => {
-                reply.ok();
+                // then copy back
+                let store = self.store.lock().unwrap();
+                let inode = store.get(ino);
+                if let Err(e) = inode.cache(&self.cache, &self.from) {
+                    error!("<-- !flush {:?} = {}", inode.get_path(), e);
+                    reply.error(e.raw_os_error().unwrap());
+                } else {
+                    reply.ok();
+                }
             }
             Err(e) => reply.error(e.raw_os_error().unwrap()),
         }

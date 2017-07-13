@@ -144,21 +144,21 @@ impl Inode {
 
     pub fn cache(&self, from: &AsRef<Path>, to: &AsRef<Path>) -> io::Result<()> {
         let mut rh = file::Handle::open_rdonly(&from.as_ref().join(&self.path))?;
-        let cache_path = to.as_ref().join(&self.path);
+        let to_path = to.as_ref().join(&self.path);
 
         // don't check for error, if this fails then create_new will fail too
-        if let Err(e) = fs::remove_file(&cache_path) {
-            debug!("!remove_file {:?} = {}", cache_path, e);
+        if let Err(e) = fs::remove_file(&to_path) {
+            debug!("!remove_file {:?} = {}", to_path, e);
         }
 
         // mkdir the parents
-        if let Some(parent) = Path::new(&cache_path).parent() {
+        if let Some(parent) = Path::new(&to_path).parent() {
             fs::create_dir_all(parent)?;
         }
 
         let mut opt = OpenOptions::new();
         opt.write(true).create_new(true).mode(self.attr.perm as u32);
-        let mut wh = file::Handle::open(&cache_path, &opt)?;
+        let mut wh = file::Handle::open(&to_path, &opt)?;
         let mut buf = [0u8; 32 * 1024];
         let mut offset = 0;
         loop {
