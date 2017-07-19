@@ -32,7 +32,7 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
             if let Some(v) = f.value.downcast_mut::<bool>() {
                 *v = true;
             }
-            if let Some(v) = f.value.downcast_mut::<HashMap<String, String>>() {
+            if let Some(_v) = f.value.downcast_mut::<HashMap<String, String>>() {
                 // parse key=value
             }
         }

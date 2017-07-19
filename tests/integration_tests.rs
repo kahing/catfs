@@ -8,33 +8,35 @@ extern crate fuse;
 
 use std::env;
 use std::fs;
-use std::fs::OpenOptions;
-use std::io;
-use std::io::Result;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::process::Command;
 use rand::{thread_rng, Rng};
 use std::path::{Path, PathBuf};
 
 use catfs::CatFS;
+use catfs::catfs::error;
 
 #[macro_use]
 mod test_suite;
 
 
 trait Fixture {
-    fn setup() -> Result<Self>
+    fn setup() -> error::Result<Self>
     where
         Self: std::marker::Sized;
-    fn teardown(self) -> Result<()>;
+    fn teardown(self) -> error::Result<()>;
 }
 
 struct CatFSTests<'a> {
     prefix: PathBuf,
     mnt: PathBuf,
-    session: fuse::BackgroundSession<'a>,
+    src: *const PathBuf,
+    cache: *const PathBuf,
+    session: Option<fuse::BackgroundSession<'a>>,
 }
 
-fn copy_all(dir1: &AsRef<Path>, dir2: &AsRef<Path>) -> io::Result<()> {
+fn copy_all(dir1: &AsRef<Path>, dir2: &AsRef<Path>) -> error::Result<()> {
     fs::create_dir(dir2)?;
 
     for entry in fs::read_dir(dir1)? {
@@ -60,11 +62,23 @@ impl<'a> CatFSTests<'a> {
     fn get_from(&self) -> PathBuf {
         return self.prefix.join("resources");
     }
+
+    fn extend(&self, s: *const PathBuf) -> &'static PathBuf {
+        return unsafe { std::mem::transmute(s) };
+    }
+
+    fn mount(&self) -> error::Result<fuse::BackgroundSession<'a>> {
+        let src = self.extend(self.src);
+        let cache = self.extend(self.cache);
+        let fs = CatFS::new(src, cache)?;
+
+        return Ok(unsafe { fuse::spawn_mount(fs, &self.mnt, &[])? });
+    }
 }
 
 impl<'a> Fixture for CatFSTests<'a> {
-    fn setup() -> Result<CatFSTests<'a>> {
-        env_logger::init();
+    fn setup() -> error::Result<CatFSTests<'a>> {
+        #[allow(unused_must_use)] env_logger::init();
 
         let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
         let prefix = PathBuf::from(manifest).join("target/test").join(
@@ -79,33 +93,37 @@ impl<'a> Fixture for CatFSTests<'a> {
 
         copy_all(&CatFSTests::get_orig_dir(), &resources)?;
 
-        let fs = CatFS::new(&resources, &cache)?;
-
-        let session = unsafe { fuse::spawn_mount(fs, &mnt, &[])? };
-
-        let t = CatFSTests {
+        let mut t = CatFSTests {
             prefix: prefix,
             mnt: mnt,
-            session: session,
+            src: &resources as *const PathBuf,
+            cache: &cache as *const PathBuf,
+            session: Default::default(),
         };
+
+        std::mem::forget(resources);
+        std::mem::forget(cache);
+
+        t.session = Some(t.mount()?);
 
         return Ok(t);
     }
 
-    fn teardown(self) -> Result<()> {
+    fn teardown(self) -> error::Result<()> {
         {
             // move out the session to let us umount first
             #[allow(unused_variables)]
             let session = self.session;
         }
         fs::remove_dir_all(&self.prefix)?;
+        // TODO do I need to free self.src/cache?
         return Ok(());
     }
 }
 
 fn diff(dir1: &AsRef<Path>, dir2: &AsRef<Path>) {
     let status = Command::new("diff")
-        .arg("-r")
+        .arg("-ru")
         .arg(dir1.as_ref().as_os_str())
         .arg(dir2.as_ref().as_os_str())
         .status()
@@ -114,6 +132,12 @@ fn diff(dir1: &AsRef<Path>, dir2: &AsRef<Path>) {
 }
 
 unit_tests!{
+    fn read_one(f: &CatFSTests) {
+        let mut s = String::new();
+        File::open(f.mnt.join("dir1/file1")).unwrap().read_to_string(&mut s).unwrap();
+        assert_eq!(s, "dir1/file1\n");
+    }
+
     fn read_all(f: &CatFSTests) {
         diff(&CatFSTests::get_orig_dir(), &f.mnt);
     }
@@ -122,7 +146,10 @@ unit_tests!{
         {
             let mut fh = OpenOptions::new().write(true).create(true)
                 .open(Path::new(&f.mnt).join("foo")).unwrap();
+            fh.write_all(b"hello world").unwrap();
         }
-        fs::symlink_metadata(f.get_from().join("foo")).unwrap();
+
+        fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
+        diff(&f.get_from(), &f.mnt);
     }
 }

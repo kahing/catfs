@@ -1,8 +1,8 @@
 extern crate libc;
 
-use std::io;
 use std::path::Path;
 
+use catfs::error;
 use catfs::rlibc;
 
 pub struct Handle {
@@ -24,7 +24,7 @@ impl Drop for Handle {
 }
 
 impl Handle {
-    pub fn open(path: &AsRef<Path>) -> io::Result<Handle> {
+    pub fn open(path: &AsRef<Path>) -> error::Result<Handle> {
         let dh = rlibc::opendir(path)?;
         return Ok(Handle { dh: dh, offset: 0 });
     }
@@ -36,7 +36,7 @@ impl Handle {
         }
     }
 
-    pub fn readdir(&mut self) -> io::Result<Option<rlibc::Dirent>> {
+    pub fn readdir(&mut self) -> error::Result<Option<rlibc::Dirent>> {
         match rlibc::readdir(self.dh)? {
             Some(entry) => {
                 self.offset = entry.off();

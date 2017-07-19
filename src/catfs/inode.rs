@@ -5,18 +5,23 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::fs::OpenOptions;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use catfs::dir;
+use catfs::error;
 use catfs::file;
+use catfs::substr::Substr;
 use self::time::Timespec;
 
 #[derive(Clone)]
-pub struct Inode {
+pub struct Inode<'a> {
+    src_dir: &'a Path,
+    cache_dir: &'a Path,
+
     name: OsString,
     path: PathBuf,
 
@@ -45,9 +50,17 @@ fn now() -> Timespec {
     };
 }
 
-impl Inode {
-    pub fn new(name: OsString, path: PathBuf, attr: fuse::FileAttr) -> Inode {
+impl<'a> Inode<'a> {
+    pub fn new<P: AsRef<Path> + ?Sized>(
+        src_dir: &'a P,
+        cache_dir: &'a P,
+        name: OsString,
+        path: PathBuf,
+        attr: fuse::FileAttr,
+    ) -> Inode<'a> {
         return Inode {
+            src_dir: src_dir.as_ref(),
+            cache_dir: cache_dir.as_ref(),
             name: name,
             path: path,
             attr: attr,
@@ -65,12 +78,30 @@ impl Inode {
         return &self.path;
     }
 
+    pub fn to_src_path(&self) -> PathBuf {
+        return self.src_dir.join(&self.path);
+    }
+
+    pub fn to_cache_path(&self) -> PathBuf {
+        return self.cache_dir.join(&self.path);
+    }
+
     pub fn get_attr(&self) -> &fuse::FileAttr {
         return &self.attr;
     }
 
     pub fn get_kind(&self) -> fuse::FileType {
         return self.attr.kind;
+    }
+
+    pub fn get_ino(&self) -> u64 {
+        return self.attr.ino;
+    }
+
+    pub fn extend(&mut self, offset: u64) {
+        if self.attr.size < offset {
+            self.attr.size = offset;
+        }
     }
 
     pub fn lookup_path(path: &AsRef<Path>) -> io::Result<fuse::FileAttr> {
@@ -107,70 +138,57 @@ impl Inode {
         return Ok(attr);
     }
 
-    pub fn lookup(&self, name: &OsStr, relative_to: &AsRef<Path>) -> io::Result<Inode> {
-        let path = self.get_child_name(name);
-        let abs_path = relative_to.as_ref().join(&path);
-        let attr = Inode::lookup_path(&abs_path)?;
-        return Ok(Inode::new(name.to_os_string(), path, attr));
+    pub fn refresh(&mut self) -> error::Result<()> {
+        self.attr = Inode::lookup_path(&self.to_src_path())?;
+        return Ok(());
     }
 
-    pub fn create(
-        &self,
-        name: &OsStr,
-        relative_to: &AsRef<Path>,
-        mode: u32,
-    ) -> io::Result<(Inode, file::Handle)> {
+    pub fn lookup(&self, name: &OsStr) -> error::Result<Inode<'a>> {
         let path = self.get_child_name(name);
+        match Inode::lookup_path(&self.to_src_path().join(name)) {
+            Ok(attr) => {
+                return Ok(Inode::new(
+                    self.src_dir,
+                    self.cache_dir,
+                    name.to_os_string(),
+                    path,
+                    attr,
+                ))
+            }
+            Err(e) => return error::propagate(e),
+        }
+    }
 
-        let cache_path = relative_to.as_ref().join(&path);
+    pub fn create(&self, name: &OsStr, mode: u32) -> error::Result<(Inode<'a>, file::Handle)> {
+        let path = self.get_child_name(name);
 
         let mut opt = OpenOptions::new();
         opt.write(true).create_new(true).mode(mode as u32);
-        let wh = file::Handle::open(&cache_path, &opt)?;
 
-        let attr = Inode::lookup_path(&cache_path)?;
-        let inode = Inode::new(name.to_os_string(), path, attr);
+        let wh = file::Handle::create(
+            &self.to_src_path().join(name),
+            &self.to_cache_path().join(name),
+            &opt,
+        )?;
+
+        let attr = Inode::lookup_path(&self.to_src_path().join(name))?;
+        let inode = Inode::new(
+            self.src_dir,
+            self.cache_dir,
+            name.to_os_string(),
+            path,
+            attr,
+        );
 
         return Ok((inode, wh));
     }
 
-    pub fn open(&self, relative_to: &AsRef<Path>, flags: u32) -> io::Result<file::Handle> {
-        return file::Handle::open_as(&relative_to.as_ref().join(&self.path), flags);
+    pub fn open(&self, flags: u32) -> error::Result<file::Handle> {
+        return file::Handle::open(&self.to_src_path(), &self.to_cache_path(), flags);
     }
 
-    pub fn opendir(&self, relative_to: &AsRef<Path>) -> io::Result<dir::Handle> {
-        return dir::Handle::open(&relative_to.as_ref().join(&self.path));
-    }
-
-    pub fn cache(&self, from: &AsRef<Path>, to: &AsRef<Path>) -> io::Result<()> {
-        let mut rh = file::Handle::open_rdonly(&from.as_ref().join(&self.path))?;
-        let to_path = to.as_ref().join(&self.path);
-
-        // don't check for error, if this fails then create_new will fail too
-        if let Err(e) = fs::remove_file(&to_path) {
-            debug!("!remove_file {:?} = {}", to_path, e);
-        }
-
-        // mkdir the parents
-        if let Some(parent) = Path::new(&to_path).parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let mut opt = OpenOptions::new();
-        opt.write(true).create_new(true).mode(self.attr.perm as u32);
-        let mut wh = file::Handle::open(&to_path, &opt)?;
-        let mut buf = [0u8; 32 * 1024];
-        let mut offset = 0;
-        loop {
-            let nread = rh.read(offset, &mut buf)?;
-            if nread == 0 {
-                break;
-            }
-            offset += nread as u64;
-            wh.write(offset, &mut buf)?;
-        }
-
-        return Ok(());
+    pub fn opendir(&self) -> error::Result<dir::Handle> {
+        return dir::Handle::open(&self.to_src_path());
     }
 
     pub fn use_ino(&mut self, ino: u64) {

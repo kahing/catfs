@@ -1,15 +1,20 @@
 extern crate libc;
 
+use std::fs;
 use std::fs::File;
-use std::io;
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::fs::OpenOptions;
+use std::os::unix::fs::FileExt;
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
+use catfs::error;
+use catfs::error::RError;
+
 pub struct Handle {
-    file: File,
-    offset: u64,
+    src_file: File,
+    cache_file: File,
+    dirty: bool,
 }
 
 // no-op to workaround the fact that we send the entire CatFS at start
@@ -40,32 +45,87 @@ pub fn flags_to_open_options(flags: i32) -> OpenOptions {
 
 
 impl Handle {
-    pub fn open(path: &AsRef<Path>, opt: &OpenOptions) -> io::Result<Handle> {
+    pub fn create(
+        src_path: &AsRef<Path>,
+        cache_path: &AsRef<Path>,
+        opt: &OpenOptions,
+    ) -> error::Result<Handle> {
         return Ok(Handle {
-            file: opt.open(path)?,
-            offset: 0,
+            src_file: opt.open(src_path)?,
+            cache_file: opt.open(cache_path)?,
+            dirty: true,
         });
     }
 
-    pub fn open_rdonly(path: &AsRef<Path>) -> io::Result<Handle> {
-        return Handle::open(path, OpenOptions::new().read(true));
-    }
-
-    pub fn open_as(path: &AsRef<Path>, flags: u32) -> io::Result<Handle> {
+    pub fn open(
+        src_path: &AsRef<Path>,
+        cache_path: &AsRef<Path>,
+        flags: u32,
+    ) -> error::Result<Handle> {
         let opt = flags_to_open_options(flags as i32);
-        return Handle::open(path, &opt);
-    }
 
-    pub fn read(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
-        if self.offset != offset {
-            self.offset = self.file.seek(SeekFrom::Start(offset))?;
+        let valid = Handle::validate_cache(src_path, cache_path)?;
+        let mut cache_opt = opt.clone();
+        if !valid {
+            // mkdir the parents
+            if let Some(parent) = cache_path.as_ref().parent() {
+                fs::create_dir_all(parent)?;
+            }
+            cache_opt.create(true).write(true);
         }
 
+        let handle = Handle {
+            src_file: opt.open(src_path)?,
+            cache_file: cache_opt.open(cache_path)?,
+            dirty: false,
+        };
+
+        if !valid && !is_truncate(flags) {
+            handle.copy(true)?;
+        }
+
+        return Ok(handle);
+    }
+
+    fn validate_cache(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> error::Result<bool> {
+        match fs::symlink_metadata(src_path) {
+            Ok(m) => {
+                match fs::symlink_metadata(cache_path) {
+                    Ok(m2) => {
+                        if m.mtime() < m2.mtime() {
+                            return Ok(true);
+                        } else {
+                            fs::remove_file(cache_path)?;
+                            return Ok(false);
+                        }
+                    }
+                    Err(e) => {
+                        if error::is_enoent(e)? {
+                            return Ok(false);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                if error::is_enoent(e)? {
+                    fs::remove_file(cache_path)?;
+                    return Ok(true);
+                }
+            }
+        }
+
+        return Ok(false);
+    }
+
+    pub fn read(&mut self, offset: u64, buf: &mut [u8]) -> error::Result<usize> {
         let nwant = buf.len();
         let mut bytes_read: usize = 0;
 
         while bytes_read < nwant {
-            match self.file.read(&mut buf[bytes_read..]) {
+            match self.cache_file.read_at(
+                &mut buf[bytes_read..],
+                offset + (bytes_read as u64),
+            ) {
                 Ok(nread) => {
                     if nread == 0 {
                         return Ok(bytes_read);
@@ -76,7 +136,7 @@ impl Handle {
                     if bytes_read > 0 {
                         return Ok(bytes_read);
                     } else {
-                        return Err(e);
+                        return Err(RError::from(e));
                     }
                 }
             }
@@ -85,16 +145,15 @@ impl Handle {
         return Ok(bytes_read);
     }
 
-    pub fn write(&mut self, offset: u64, buf: &[u8]) -> io::Result<usize> {
-        if self.offset != offset {
-            self.offset = self.file.seek(SeekFrom::Start(offset))?;
-        }
-
+    pub fn write(&mut self, offset: u64, buf: &[u8]) -> error::Result<usize> {
         let nwant = buf.len();
         let mut bytes_written: usize = 0;
 
         while bytes_written < nwant {
-            match self.file.write(&buf[bytes_written..]) {
+            match self.cache_file.write_at(
+                &buf[bytes_written..],
+                offset + (bytes_written as u64),
+            ) {
                 Ok(nwritten) => {
                     if nwritten == 0 {
                         return Ok(bytes_written);
@@ -105,7 +164,7 @@ impl Handle {
                     if bytes_written > 0 {
                         return Ok(bytes_written);
                     } else {
-                        return Err(e);
+                        return Err(RError::from(e));
                     }
                 }
             }
@@ -114,7 +173,36 @@ impl Handle {
         return Ok(bytes_written);
     }
 
-    pub fn flush(&mut self) -> io::Result<()> {
-        return self.file.flush();
+    pub fn flush(&mut self) -> error::Result<()> {
+        if !self.dirty {
+            return Ok(());
+        }
+
+        return self.copy(false);
+    }
+
+    fn copy(&self, to_cache: bool) -> error::Result<()> {
+        let rh: &File;
+        let wh: &File;
+        if to_cache {
+            rh = &self.src_file;
+            wh = &self.cache_file;
+        } else {
+            rh = &self.cache_file;
+            wh = &self.src_file;
+        }
+
+        let mut buf = [0u8; 32 * 1024];
+        let mut offset = 0;
+        loop {
+            let nread = rh.read_at(&mut buf, offset)?;
+            if nread == 0 {
+                break;
+            }
+            wh.write_at(&buf, offset)?;
+            offset += nread as u64;
+        }
+
+        return Ok(());
     }
 }

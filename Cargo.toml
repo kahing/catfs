@@ -4,9 +4,10 @@ version = "0.1.0"
 authors = ["Ka-Hing Cheung <khc@hxbc.us>"]
 
 [dependencies]
+backtrace = "0.3"
 fuse = "0.3.0"
 log = "0.3"
-env_logger = "0.3"
+env_logger = "0.4"
 clap = "2.25.0"
 time = "0.1"
 libc = "0.2"

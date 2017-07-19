@@ -8,12 +8,15 @@ extern crate chan_signal;
 
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::path::Path;
 
 use chan_signal::Signal;
 use clap::{App, Arg};
 
 mod flags;
 mod catfs;
+
+use catfs::error;
 
 #[derive(Default)]
 struct FlagStorage {
@@ -25,6 +28,12 @@ struct FlagStorage {
 }
 
 fn main() {
+    if let Err(e) = main_internal() {
+        error!("Cannot mount: {}", e);
+    }
+}
+
+fn main_internal() -> error::Result<()> {
     env_logger::init().unwrap();
 
     let mut flags: FlagStorage = Default::default();
@@ -76,19 +85,14 @@ fn main() {
     }
 
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-    match catfs::CatFS::new(&flags.cat_from, &flags.cat_to) {
-        Ok(catfs) => {
-            unsafe {
-                let res = fuse::spawn_mount(catfs, &flags.mount_point, &[]);
-                match res {
-                    Ok(session) => {
-                        // unmount after we get signaled because session will go out of scope
-                        signal.recv().unwrap();
-                    }
-                    Err(e) => error!("Cannot mount {:?}: {}", flags.mount_point, e),
-                }
-            }
-        }
-        Err(e) => error!("Cannot mount {:?}: {}", flags.mount_point, e),
+    let path_from = Path::new(&flags.cat_from).canonicalize()?;
+    let path_to = Path::new(&flags.cat_to).canonicalize()?;
+    let fs = catfs::CatFS::new(&path_from, &path_to)?;
+    unsafe {
+        #[allow(unused_variables)]
+        let session = fuse::spawn_mount(fs, &flags.mount_point, &[])?;
+        // unmount after we get signaled because session will go out of scope
+        signal.recv().unwrap();
     }
+    return Ok(());
 }
