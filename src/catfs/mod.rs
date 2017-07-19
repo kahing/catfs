@@ -375,14 +375,26 @@ impl<'a> Filesystem for CatFS<'a> {
             match file.write(offset, data) {
                 Ok(nbytes) => nwritten = nbytes,
                 Err(e) => {
-                    debug!("<-- !write {:016x} = {}", fh, e);
+                    debug!(
+                        "<-- !write 0x{:016x} {:?} {} = {}",
+                        fh,
+                        OsStr::from_bytes(&data[..cmp::min(32, data.len())]),
+                        offset,
+                        e
+                    );
                     reply.error(e.raw_os_error().unwrap());
                     return;
                 }
             }
         }
 
-        debug!("<-- write {:016x} = {}", fh, nwritten);
+        debug!(
+            "<-- write 0x{:016x} {:?} {} = {}",
+            fh,
+            OsStr::from_bytes(&data[..cmp::min(32, data.len())]),
+            offset,
+            nwritten
+        );
         reply.written(nwritten as u32);
         let mut store = self.store.lock().unwrap();
         let mut inode = store.get_mut(ino);

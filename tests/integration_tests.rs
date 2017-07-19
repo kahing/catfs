@@ -12,8 +12,10 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::process::Command;
-use rand::{thread_rng, Rng};
 use std::path::{Path, PathBuf};
+use std::os::unix::fs::FileExt;
+
+use rand::{thread_rng, Rng};
 
 use catfs::CatFS;
 use catfs::catfs::error;
@@ -182,5 +184,18 @@ unit_tests!{
         }
         assert_eq!(i, 1000);
         assert_eq!(total, (1000 * (1000 + 1)) / 2);
+    }
+
+    fn read_modify_write(f: &CatFSTests) {
+        let file1 = f.mnt.join("dir1/file1");
+        {
+            let fh = OpenOptions::new().write(true).open(&file1).unwrap();
+            let nbytes = fh.write_at("*".as_bytes(), 9).unwrap();
+            assert_eq!(nbytes, 1);
+        }
+
+        let mut s = String::new();
+        File::open(&file1).unwrap().read_to_string(&mut s).unwrap();
+        assert_eq!(s, "dir1/file*\n");
     }
 }

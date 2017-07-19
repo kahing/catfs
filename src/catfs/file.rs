@@ -69,11 +69,15 @@ impl Handle {
         cache_path: &AsRef<Path>,
         flags: u32,
     ) -> error::Result<Handle> {
-        let opt = flags_to_open_options(flags as i32);
+        let mut opt = flags_to_open_options(flags as i32);
+
+        // even if file is open for write only, I still need to be
+        // able to read the src for read-modify-write
+        opt.read(true);
 
         let valid = Handle::validate_cache(src_path, cache_path)?;
         let mut cache_opt = opt.clone();
-        cache_opt.read(true);
+
         if !valid {
             // mkdir the parents
             if let Some(parent) = cache_path.as_ref().parent() {
@@ -211,7 +215,7 @@ impl Handle {
             if nread == 0 {
                 break;
             }
-            wh.write_at(&buf, offset)?;
+            wh.write_at(&buf[..nread], offset)?;
             offset += nread as u64;
         }
 
