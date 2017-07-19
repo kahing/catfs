@@ -234,10 +234,13 @@ impl<'a> Filesystem for CatFS<'a> {
                 Ok(res) => {
                     match res {
                         Some(entry) => {
-                            debug!("<-- readdir {} {:?}", dh, entry.name());
                             if reply.add(entry.ino(), entry.off(), entry.kind(), entry.name()) {
+                                dir.push(entry);
                                 break;
+                            } else {
+                                dir.consumed(&entry);
                             }
+                            debug!("<-- readdir {} = {:?} {}", dh, entry.name(), entry.off());
                         }
                         None => {
                             break;
@@ -245,6 +248,7 @@ impl<'a> Filesystem for CatFS<'a> {
                     }
                 }
                 Err(e) => {
+                    error!("<-- !readdir {} = {}", dh, e);
                     reply.error(e.raw_os_error().unwrap());
                     return;
                 }

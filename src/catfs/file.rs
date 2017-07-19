@@ -52,6 +52,11 @@ impl Handle {
     ) -> error::Result<Handle> {
         let mut cache_opt = opt.clone();
         cache_opt.read(true);
+
+        if let Some(parent) = cache_path.as_ref().parent() {
+            fs::create_dir_all(parent)?;
+        }
+
         return Ok(Handle {
             src_file: opt.open(src_path)?,
             cache_file: cache_opt.open(cache_path)?,

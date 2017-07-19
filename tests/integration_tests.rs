@@ -166,4 +166,21 @@ unit_tests!{
         let foo = fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
         assert_eq!(foo.len(), 100 * 1024 * 1024);
     }
+
+    fn large_dir(f: &CatFSTests) {
+        let dir2 = Path::new(&f.mnt).join("dir2");
+        for i in 1..1001 {
+            let _fh = OpenOptions::new().write(true).create(true)
+                .open(dir2.join(format!("{}", i))).unwrap();
+        }
+
+        let mut i = 0;
+        let mut total = 0;
+        for entry in fs::read_dir(dir2).unwrap() {
+            i += 1;
+            total += entry.unwrap().file_name().to_str().unwrap().parse().unwrap();
+        }
+        assert_eq!(i, 1000);
+        assert_eq!(total, (1000 * (1000 + 1)) / 2);
+    }
 }

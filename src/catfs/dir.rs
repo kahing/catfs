@@ -8,6 +8,8 @@ use catfs::rlibc;
 pub struct Handle {
     dh: *mut libc::DIR,
     offset: u64,
+    entry: rlibc::Dirent,
+    entry_valid: bool,
 }
 
 // no-op to workaround the fact that we send the entire CatFS at start
@@ -26,23 +28,47 @@ impl Drop for Handle {
 impl Handle {
     pub fn open(path: &AsRef<Path>) -> error::Result<Handle> {
         let dh = rlibc::opendir(path)?;
-        return Ok(Handle { dh: dh, offset: 0 });
+        return Ok(Handle {
+            dh: dh,
+            offset: 0,
+            entry: Default::default(),
+            entry_valid: false,
+        });
     }
 
     pub fn seekdir(&mut self, offset: u64) {
         if offset != self.offset {
+            debug!(
+                "seeking {} to {}",
+                unsafe { libc::telldir(self.dh) },
+                offset
+            );
             rlibc::seekdir(self.dh, offset);
             self.offset = offset;
+            self.entry_valid = false;
         }
     }
 
+    pub fn push(&mut self, en: rlibc::Dirent) {
+        self.entry = en;
+        self.entry_valid = true;
+    }
+
+    pub fn consumed(&mut self, en: &rlibc::Dirent) {
+        self.offset = en.off();
+        self.entry_valid = false;
+    }
+
     pub fn readdir(&mut self) -> error::Result<Option<rlibc::Dirent>> {
-        match rlibc::readdir(self.dh)? {
-            Some(entry) => {
-                self.offset = entry.off();
-                return Ok(Some(entry));
+        if self.entry_valid {
+            return Ok(Some(self.entry.clone()));
+        } else {
+            match rlibc::readdir(self.dh)? {
+                Some(entry) => {
+                    return Ok(Some(entry));
+                }
+                None => return Ok(None),
             }
-            None => return Ok(None),
         }
     }
 }

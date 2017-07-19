@@ -37,8 +37,23 @@ pub fn seekdir(dir: *mut libc::DIR, loc: u64) {
     }
 }
 
+#[derive(Clone)]
 pub struct Dirent {
     en: libc::dirent,
+}
+
+impl Default for Dirent {
+    fn default() -> Dirent {
+        return Dirent {
+            en: libc::dirent {
+                d_ino: 0,
+                d_off: 0,
+                d_reclen: 0,
+                d_type: libc::DT_REG,
+                d_name: [0i8; 256], // FIXME: don't hardcode 256
+            },
+        };
+    }
 }
 
 fn array_to_osstring(cslice: &[libc::c_char]) -> OsString {
@@ -70,14 +85,8 @@ impl Dirent {
 }
 
 pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<Dirent>> {
-    let mut entry: libc::dirent = libc::dirent {
-        d_ino: 0,
-        d_off: 0,
-        d_reclen: 0,
-        d_type: libc::DT_REG,
-        d_name: [0i8; 256], // FIXME: don't hardcode 256
-    };
-    let mut entry_p: *mut libc::dirent = &mut entry;
+    let mut entry: Dirent = Default::default();
+    let mut entry_p: *mut libc::dirent = &mut entry.en;
     let entry_pp: *mut *mut libc::dirent = &mut entry_p;
 
     unsafe {
@@ -86,7 +95,7 @@ pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<Dirent>> {
             if (*entry_pp).is_null() {
                 return Ok(None);
             } else {
-                return Ok(Some(Dirent { en: entry }));
+                return Ok(Some(entry));
             }
         } else {
             return Err(io::Error::last_os_error());
