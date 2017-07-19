@@ -7,6 +7,7 @@ extern crate rand;
 extern crate fuse;
 
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -151,5 +152,18 @@ unit_tests!{
 
         fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
         diff(&f.get_from(), &f.mnt);
+    }
+
+    fn large_write(f: &CatFSTests) {
+        let mut of=OsString::from("of=");
+        of.push(f.mnt.join("foo"));
+        let status = Command::new("dd")
+            .arg("if=/dev/zero").arg(of)
+            .arg("bs=1M").arg("count=100")
+            .status().expect("failed to execute `dd'");
+        assert!(status.success());
+        
+        let foo = fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
+        assert_eq!(foo.len(), 100 * 1024 * 1024);
     }
 }

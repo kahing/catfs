@@ -395,6 +395,7 @@ impl<'a> Filesystem for CatFS<'a> {
 
             // first flush locally
             if let Err(e) = file.flush() {
+                error!("<-- !flush {:?} = {}", fh, e);
                 reply.error(e.raw_os_error().unwrap());
                 return;
             }

@@ -50,9 +50,11 @@ impl Handle {
         cache_path: &AsRef<Path>,
         opt: &OpenOptions,
     ) -> error::Result<Handle> {
+        let mut cache_opt = opt.clone();
+        cache_opt.read(true);
         return Ok(Handle {
             src_file: opt.open(src_path)?,
-            cache_file: opt.open(cache_path)?,
+            cache_file: cache_opt.open(cache_path)?,
             dirty: true,
         });
     }
@@ -66,6 +68,7 @@ impl Handle {
 
         let valid = Handle::validate_cache(src_path, cache_path)?;
         let mut cache_opt = opt.clone();
+        cache_opt.read(true);
         if !valid {
             // mkdir the parents
             if let Some(parent) = cache_path.as_ref().parent() {
@@ -170,15 +173,19 @@ impl Handle {
             }
         }
 
+        if bytes_written != 0 {
+            self.dirty = true;
+        }
+
         return Ok(bytes_written);
     }
 
     pub fn flush(&mut self) -> error::Result<()> {
-        if !self.dirty {
-            return Ok(());
+        if self.dirty {
+            self.copy(false)?;
+            self.dirty = false;
         }
-
-        return self.copy(false);
+        return Ok(());
     }
 
     fn copy(&self, to_cache: bool) -> error::Result<()> {
