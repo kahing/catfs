@@ -19,7 +19,6 @@ use std::path::{Path, PathBuf};
 use std::os::unix::fs::FileExt;
 
 use rand::{thread_rng, Rng};
-use xattr::FileExt as XattrFileExt;
 
 use catfs::CatFS;
 use catfs::catfs::error;
@@ -208,6 +207,17 @@ unit_tests!{
         let mut s = String::new();
         File::open(&file1).unwrap().read_to_string(&mut s).unwrap();
         assert_eq!(s, "dir1/file*\n");
+        diff(&f.get_from(), &f.mnt);
+    }
+
+    fn write_twice(f: &CatFSTests) {
+        for _ in 0..2 {
+            let mut fh = OpenOptions::new().write(true).create(true)
+                .open(Path::new(&f.mnt).join("foo")).unwrap();
+            fh.write_all(b"hello world").unwrap();
+        }
+
+        fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
         diff(&f.get_from(), &f.mnt);
     }
 
