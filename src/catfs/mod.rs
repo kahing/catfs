@@ -125,6 +125,11 @@ impl<'a> CatFS<'a> {
             attr.ino,
         );
     }
+
+    fn remove_path(&mut self, path: &Path) {
+        let mut store = self.store.lock().unwrap();
+        store.inodes_cache.remove(path);
+    }
 }
 
 impl<'a> Filesystem for CatFS<'a> {
@@ -444,5 +449,49 @@ impl<'a> Filesystem for CatFS<'a> {
         // the handle will be destroyed and closed
         fh_store.handles.remove(&fh);
         reply.ok();
+    }
+
+    fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        let parent_inode: Arc<Inode<'a>>;
+        {
+            let store = self.store.lock().unwrap();
+            parent_inode = store.get(parent).clone();
+        }
+
+        if let Err(e) = parent_inode.unlink(name) {
+            debug!(
+                "<-- !unlink {:?}/{:?} = {}",
+                parent_inode.get_path(),
+                name,
+                e
+            );
+            reply.error(e.raw_os_error().unwrap());
+        } else {
+            debug!("<-- unlink {:?}/{:?}", parent_inode.get_path(), name);
+            reply.ok();
+            self.remove_path(&parent_inode.get_path().join(name));
+        }
+    }
+
+    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        let parent_inode: Arc<Inode<'a>>;
+        {
+            let store = self.store.lock().unwrap();
+            parent_inode = store.get(parent).clone();
+        }
+
+        if let Err(e) = parent_inode.rmdir(name) {
+            debug!(
+                "<-- !rmdir {:?}/{:?} = {}",
+                parent_inode.get_path(),
+                name,
+                e
+            );
+            reply.error(e.raw_os_error().unwrap());
+        } else {
+            debug!("<-- rmdir {:?}/{:?}", parent_inode.get_path(), name);
+            reply.ok();
+            self.remove_path(&parent_inode.get_path().join(name));
+        }
     }
 }

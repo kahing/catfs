@@ -187,6 +187,20 @@ impl<'a> Inode<'a> {
         return file::Handle::open(&self.to_src_path(), &self.to_cache_path(), flags);
     }
 
+    pub fn unlink(&self, name: &OsStr) -> io::Result<()> {
+        return file::Handle::unlink(
+            &self.to_src_path().join(name),
+            &self.to_cache_path().join(name),
+        );
+    }
+
+    pub fn rmdir(&self, name: &OsStr) -> io::Result<()> {
+        return file::Handle::rmdir(
+            &self.to_src_path().join(name),
+            &self.to_cache_path().join(name),
+        );
+    }
+
     pub fn opendir(&self) -> error::Result<dir::Handle> {
         return dir::Handle::open(&self.to_src_path());
     }

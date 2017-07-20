@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 #[macro_use]
 extern crate log;
+extern crate libc;
 extern crate env_logger;
 extern crate catfs;
 extern crate rand;
@@ -10,6 +11,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::fs::{File, OpenOptions};
+use std::io;
 use std::io::{Read, Write};
 use std::process::Command;
 use std::path::{Path, PathBuf};
@@ -197,5 +199,49 @@ unit_tests!{
         let mut s = String::new();
         File::open(&file1).unwrap().read_to_string(&mut s).unwrap();
         assert_eq!(s, "dir1/file*\n");
+    }
+
+    fn unlink(f: &CatFSTests) {
+        let file1 = f.mnt.join("dir1/file1");
+        fs::remove_file(&file1).unwrap();
+        if let Err(e) = fs::symlink_metadata(&file1) {
+            assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        } else {
+            panic!("{:?} still exists", file1);
+        }
+    }
+
+    fn read_unlink(f: &CatFSTests) {
+        let file1 = f.mnt.join("dir1/file1");
+        {
+            let mut s = String::new();
+            File::open(&file1).unwrap().read_to_string(&mut s).unwrap();
+            assert_eq!(s, "dir1/file1\n");
+        }
+        fs::remove_file(&file1).unwrap();
+        if let Err(e) = fs::symlink_metadata(&file1) {
+            assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        } else {
+            panic!("{:?} still exists", file1);
+        }
+    }
+
+    fn rmdir(f: &CatFSTests) {
+        let dir2 = f.mnt.join("dir2");
+        fs::remove_dir(&dir2).unwrap();
+        if let Err(e) = fs::symlink_metadata(&dir2) {
+            assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        } else {
+            panic!("{:?} still exists", dir2);
+        }
+    }
+
+    fn rmdir_not_empty(f: &CatFSTests) {
+        let dir1 = f.mnt.join("dir1");
+        if let Err(e) = fs::remove_dir(&dir1) {
+            assert_eq!(e.raw_os_error().unwrap(), libc::ENOTEMPTY);
+        } else {
+            panic!("{:?} deleted", dir1);
+        }
     }
 }

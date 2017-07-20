@@ -3,6 +3,7 @@ extern crate libc;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
+use std::io;
 use std::os::unix::fs::FileExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::MetadataExt;
@@ -99,6 +100,24 @@ impl Handle {
         return Ok(handle);
     }
 
+    pub fn unlink(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> io::Result<()> {
+        if let Err(e) = fs::remove_file(cache_path) {
+            if !error::is_enoent(&e) {
+                return Err(e);
+            }
+        }
+        return fs::remove_file(src_path);
+    }
+
+    pub fn rmdir(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> io::Result<()> {
+        if let Err(e) = fs::remove_dir(cache_path) {
+            if !error::is_enoent(&e) {
+                return Err(e);
+            }
+        }
+        return fs::remove_dir(src_path);
+    }
+
     fn validate_cache(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> error::Result<bool> {
         match fs::symlink_metadata(src_path) {
             Ok(m) => {
@@ -112,14 +131,14 @@ impl Handle {
                         }
                     }
                     Err(e) => {
-                        if error::is_enoent(e)? {
+                        if error::try_enoent(e)? {
                             return Ok(false);
                         }
                     }
                 }
             }
             Err(e) => {
-                if error::is_enoent(e)? {
+                if error::try_enoent(e)? {
                     fs::remove_file(cache_path)?;
                     return Ok(true);
                 }

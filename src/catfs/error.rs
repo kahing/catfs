@@ -14,8 +14,12 @@ pub struct RError<E> {
     bt: Option<Backtrace>,
 }
 
-pub fn is_enoent(e: io::Error) -> Result<bool> {
-    if e.kind() == io::ErrorKind::NotFound {
+pub fn is_enoent(e: &io::Error) -> bool {
+    return e.kind() == io::ErrorKind::NotFound;
+}
+
+pub fn try_enoent(e: io::Error) -> Result<bool> {
+    if is_enoent(&e) {
         return Ok(true);
     } else {
         return Err(RError::from(e));
