@@ -164,7 +164,7 @@ impl Handle {
         return Ok(false);
     }
 
-    pub fn read(&mut self, offset: u64, buf: &mut [u8]) -> error::Result<usize> {
+    pub fn read(&self, offset: u64, buf: &mut [u8]) -> error::Result<usize> {
         let nwant = buf.len();
         let mut bytes_read: usize = 0;
 

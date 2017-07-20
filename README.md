@@ -39,8 +39,9 @@ Licensed under the Apache License, Version 2.0
 
 Catfs is ALPHA software. Don't use this if you value your data.
 
-All requests are serviced on the same thread. So paging in one large
-file would block everything else.
+Paging in/writeback are done in background threads. All other requests
+are serviced on the same thread, so many operations could block each
+other.
 
 Data is always written back to the original filesystem on `flush()`,
 so effectively it's a write-through cache.
@@ -49,7 +50,7 @@ Data is never evicted from cache even when local filesystem is full.
 
 ## TODO
 
-* move caching to background threads
+* move all operations to background threads
 * mechanism to control cache size and eviction
 
 # References
