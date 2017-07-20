@@ -170,6 +170,7 @@ unit_tests!{
         
         let foo = fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
         assert_eq!(foo.len(), 100 * 1024 * 1024);
+        diff(&f.get_from(), &f.mnt);
     }
 
     fn large_dir(f: &CatFSTests) {
@@ -187,6 +188,7 @@ unit_tests!{
         }
         assert_eq!(i, 1000);
         assert_eq!(total, (1000 * (1000 + 1)) / 2);
+        diff(&f.get_from(), &f.mnt);
     }
 
     fn read_modify_write(f: &CatFSTests) {
@@ -200,6 +202,7 @@ unit_tests!{
         let mut s = String::new();
         File::open(&file1).unwrap().read_to_string(&mut s).unwrap();
         assert_eq!(s, "dir1/file*\n");
+        diff(&f.get_from(), &f.mnt);
     }
 
     fn unlink(f: &CatFSTests) {
@@ -210,6 +213,7 @@ unit_tests!{
         } else {
             panic!("{:?} still exists", file1);
         }
+        diff(&f.get_from(), &f.mnt);
     }
 
     fn read_unlink(f: &CatFSTests) {
@@ -225,6 +229,7 @@ unit_tests!{
         } else {
             panic!("{:?} still exists", file1);
         }
+        diff(&f.get_from(), &f.mnt);
     }
 
     fn rmdir(f: &CatFSTests) {
@@ -235,6 +240,7 @@ unit_tests!{
         } else {
             panic!("{:?} still exists", dir2);
         }
+        diff(&f.get_from(), &f.mnt);
     }
 
     fn rmdir_not_empty(f: &CatFSTests) {

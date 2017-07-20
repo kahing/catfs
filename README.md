@@ -7,7 +7,7 @@ CatFS is a caching filesystem written in Rust.
 Catfs allows you to have cached access to another
 filesystem. Currently it only provides a data cache.
 
-Catfs is not currently crash-safe.
+Catfs is ALPHA software. Don't use this if you value your data.
 
 # Usage
 
@@ -26,4 +26,7 @@ Licensed under the Apache License, Version 2.0
 
 # Current Status
 
-Catfs is not currently crash-safe. Don't use this if you value your data.
+Catfs is ALPHA software. Don't use this if you value your data.
+
+All requests are serviced on the same thread. So paging in one large
+file would block everything else.
