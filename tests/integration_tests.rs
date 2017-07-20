@@ -96,6 +96,7 @@ impl<'a> Fixture for CatFSTests<'a> {
         fs::create_dir_all(&mnt)?;
         fs::create_dir_all(&cache)?;
 
+        fs::create_dir(CatFSTests::get_orig_dir().join("dir2"));
         copy_all(&CatFSTests::get_orig_dir(), &resources)?;
 
         let mut t = CatFSTests {
