@@ -406,7 +406,7 @@ impl<'a> Filesystem for CatFS<'a> {
                 Ok(nbytes) => nwritten = nbytes,
                 Err(e) => {
                     debug!(
-                        "<-- !write 0x{:016x} {:?} {} = {}",
+                        "<-- !write 0x{:016x} {:?} @ {} = {}",
                         fh,
                         OsStr::from_bytes(&data[..cmp::min(32, data.len())]),
                         offset,
@@ -419,7 +419,7 @@ impl<'a> Filesystem for CatFS<'a> {
         }
 
         debug!(
-            "<-- write 0x{:016x} {:?} {} = {}",
+            "<-- write 0x{:016x} {:?} @ {} = {}",
             fh,
             OsStr::from_bytes(&data[..cmp::min(32, data.len())]),
             offset,

@@ -2,18 +2,16 @@ extern crate libc;
 extern crate xattr;
 
 use std::fs;
-use std::fs::File;
-use std::fs::OpenOptions;
 use std::io;
-use std::os::unix::fs::FileExt;
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-use self::xattr::FileExt as XattrFileExt;
+use self::xattr::FileExt;
 
 use catfs::error;
 use catfs::error::RError;
+use catfs::rlibc;
+use catfs::rlibc::File;
 
 pub struct Handle {
     src_file: File,
@@ -29,44 +27,31 @@ pub static DIRTY: [u8; 1] = ['0' as u8];
 // bounds us to rust nightly
 unsafe impl Send for Handle {}
 
-pub fn is_truncate(flags: u32) -> bool {
-    return (flags & (libc::O_TRUNC as u32)) != 0;
+fn make_rdwr(f: &mut u32) {
+    *f = (*f & !rlibc::O_ACCMODE) | rlibc::O_RDWR;
 }
-
-pub fn flags_to_open_options(flags: i32) -> OpenOptions {
-    let mut opt = OpenOptions::new();
-    let access_mode = flags & libc::O_ACCMODE;
-
-    if access_mode == libc::O_RDONLY {
-        opt.read(true);
-    } else if access_mode == libc::O_WRONLY {
-        opt.write(true);
-    } else if access_mode == libc::O_RDWR {
-        opt.read(true).write(true);
-    }
-
-    opt.custom_flags(flags);
-
-    return opt;
-}
-
 
 impl Handle {
     pub fn create(
         src_path: &AsRef<Path>,
         cache_path: &AsRef<Path>,
-        opt: &OpenOptions,
+        flags: u32,
+        mode: u32,
     ) -> error::Result<Handle> {
-        let mut cache_opt = opt.clone();
-        cache_opt.read(true);
+        // need to read the cache file for writeback
+        let mut cache_flags = flags.clone();
+        if (cache_flags & rlibc::O_ACCMODE) == rlibc::O_WRONLY {
+            make_rdwr(&mut cache_flags);
+        }
+        //debug!("create {:b} {:b} {:#o}", flags, cache_flags, mode);
 
         if let Some(parent) = cache_path.as_ref().parent() {
             fs::create_dir_all(parent)?;
         }
 
         return Ok(Handle {
-            src_file: opt.open(src_path)?,
-            cache_file: cache_opt.open(cache_path)?,
+            src_file: File::open(src_path, flags, mode)?,
+            cache_file: File::open(cache_path, cache_flags, mode)?,
             dirty: true,
         });
     }
@@ -76,30 +61,42 @@ impl Handle {
         cache_path: &AsRef<Path>,
         flags: u32,
     ) -> error::Result<Handle> {
-        let mut opt = flags_to_open_options(flags as i32);
-
         // even if file is open for write only, I still need to be
         // able to read the src for read-modify-write
-        opt.read(true);
+        let mut flags = flags;
+        if (flags & rlibc::O_ACCMODE) == rlibc::O_WRONLY {
+            make_rdwr(&mut flags);
+        }
 
         let valid = Handle::validate_cache(src_path, cache_path)?;
-        let mut cache_opt = opt.clone();
+        debug!(
+            "{:?} {} a valid cache file for {:?}",
+            cache_path.as_ref(),
+            if valid { "is" } else { "is not" },
+            src_path.as_ref()
+        );
+        let mut cache_flags = flags.clone();
 
         if !valid {
             // mkdir the parents
             if let Some(parent) = cache_path.as_ref().parent() {
                 fs::create_dir_all(parent)?;
             }
-            cache_opt.create(true).write(true);
+            // need to cache this file so need to open it for write
+            cache_flags |= rlibc::O_CREAT;
+            if (cache_flags & rlibc::O_ACCMODE) == rlibc::O_RDONLY {
+                make_rdwr(&mut cache_flags);
+            }
         }
 
         let handle = Handle {
-            src_file: opt.open(src_path)?,
-            cache_file: cache_opt.open(cache_path)?,
+            src_file: File::open(src_path, flags, 0o666)?,
+            cache_file: File::open(cache_path, cache_flags, 0o666)?,
             dirty: false,
         };
 
-        if !valid && !is_truncate(flags) {
+        if !valid && (flags & rlibc::O_TRUNC) == 0 {
+            debug!("read ahead {:?}", src_path.as_ref());
             handle.copy(true)?;
         }
 
@@ -235,6 +232,8 @@ impl Handle {
             self.copy(false)?;
             self.dirty = false;
         }
+        self.cache_file.flush()?;
+        self.src_file.flush()?;
         return Ok(());
     }
 
@@ -262,5 +261,16 @@ impl Handle {
 
         self.cache_file.set_xattr("user.catfs.pristine", &PRISTINE)?;
         return Ok(());
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        if let Err(e) = self.cache_file.close() {
+            error!("!close(cache) = {}", RError::from(e));
+        }
+        if let Err(e) = self.src_file.close() {
+            error!("!close(src) = {}", RError::from(e));
+        }
     }
 }

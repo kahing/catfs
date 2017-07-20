@@ -5,16 +5,14 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::fs::OpenOptions;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use catfs::dir;
 use catfs::error;
 use catfs::file;
-use catfs::substr::Substr;
+use catfs::rlibc;
 use self::time::Timespec;
 
 #[derive(Clone)]
@@ -162,13 +160,13 @@ impl<'a> Inode<'a> {
     pub fn create(&self, name: &OsStr, mode: u32) -> error::Result<(Inode<'a>, file::Handle)> {
         let path = self.get_child_name(name);
 
-        let mut opt = OpenOptions::new();
-        opt.write(true).create_new(true).mode(mode as u32);
+        let flags = rlibc::O_WRONLY | rlibc::O_CREAT | rlibc::O_EXCL;
 
         let wh = file::Handle::create(
             &self.to_src_path().join(name),
             &self.to_cache_path().join(name),
-            &opt,
+            flags,
+            mode,
         )?;
 
         let attr = Inode::lookup_path(&self.to_src_path().join(name))?;

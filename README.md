@@ -22,6 +22,10 @@ $ # optimized binary now in $HOME/.cargo/bin/catfs
 
 # Usage
 
+Catfs requires extended attributes (xattr) to be enabled on the
+filesystem where files are cached to. Typically this means you need to
+have `user_xattr` mount option turned on.
+
 ```ShellSession
 $ catfs <from> <to> <mountpoint>
 ```
