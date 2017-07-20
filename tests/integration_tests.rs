@@ -6,6 +6,7 @@ extern crate env_logger;
 extern crate catfs;
 extern crate rand;
 extern crate fuse;
+extern crate xattr;
 
 use std::env;
 use std::ffi::OsString;
@@ -18,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::os::unix::fs::FileExt;
 
 use rand::{thread_rng, Rng};
+use xattr::FileExt as XattrFileExt;
 
 use catfs::CatFS;
 use catfs::catfs::error;
@@ -66,6 +68,10 @@ impl<'a> CatFSTests<'a> {
 
     fn get_from(&self) -> PathBuf {
         return self.prefix.join("resources");
+    }
+
+    fn get_cache(&self) -> PathBuf {
+        return self.prefix.join("cache");
     }
 
     fn extend(&self, s: *const PathBuf) -> &'static PathBuf {
@@ -250,5 +256,36 @@ unit_tests!{
         } else {
             panic!("{:?} deleted", dir1);
         }
+    }
+
+    fn check_dirty(f: &CatFSTests) {
+        let foo = f.mnt.join("foo");
+        let foo_cache = f.get_cache().join("foo");
+        {
+            let mut fh = OpenOptions::new().write(true).create(true)
+                .open(&foo).unwrap();
+            fh.write_all(b"hello world").unwrap();
+
+            // at this point the file is NOT flushed yet, so pristine
+            // should not be set
+            assert!(xattr::get(&foo_cache, "user.catfs.pristine").unwrap().is_none());
+        }
+
+        let v = xattr::get(&foo_cache, "user.catfs.pristine").unwrap().unwrap();
+        assert_eq!(v, catfs::catfs::file::PRISTINE);
+
+        {
+            let mut fh = OpenOptions::new().write(true)
+                .open(&foo).unwrap();
+            fh.write_all(b"hello world").unwrap();
+
+            // at this point the file is NOT flushed yet, so pristine
+            // should be dirty
+            let v = xattr::get(&foo_cache, "user.catfs.pristine").unwrap().unwrap();
+            assert_eq!(v, catfs::catfs::file::DIRTY);
+        }
+
+        let v = xattr::get(&foo_cache, "user.catfs.pristine").unwrap().unwrap();
+        assert_eq!(v, catfs::catfs::file::PRISTINE);
     }
 }

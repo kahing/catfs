@@ -4,7 +4,7 @@ CatFS is a caching filesystem written in Rust.
 
 # Overview
 
-Catfs allows you to have cached access to another
+Catfs allows you to have cached access to another (possibily remote)
 filesystem. Currently it only provides a data cache.
 
 Catfs is ALPHA software. Don't use this if you value your data.

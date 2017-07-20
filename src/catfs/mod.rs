@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use self::time::Timespec;
 
 pub mod error;
+pub mod file;
 
 mod dir;
-mod file;
 mod inode;
 mod rlibc;
 mod substr;

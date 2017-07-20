@@ -12,6 +12,7 @@ clap = "2.25.0"
 time = "0.1"
 libc = "0.2"
 chan-signal = "0.2"
+xattr = "0.2"
 
 [dev-dependencies]
 rand = "0.3"

@@ -1,4 +1,5 @@
 extern crate libc;
+extern crate xattr;
 
 use std::fs;
 use std::fs::File;
@@ -9,6 +10,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
+use self::xattr::FileExt as XattrFileExt;
+
 use catfs::error;
 use catfs::error::RError;
 
@@ -17,6 +20,9 @@ pub struct Handle {
     cache_file: File,
     dirty: bool,
 }
+
+pub static PRISTINE: [u8; 1] = ['1' as u8];
+pub static DIRTY: [u8; 1] = ['0' as u8];
 
 // no-op to workaround the fact that we send the entire CatFS at start
 // time, but we never send anything. Could have used Unique but that
@@ -118,12 +124,19 @@ impl Handle {
         return fs::remove_dir(src_path);
     }
 
+    fn is_pristine(cache_path: &AsRef<Path>) -> error::Result<bool> {
+        if let Some(v) = xattr::get(cache_path, "user.catfs.pristine")? {
+            return Ok(v == PRISTINE);
+        }
+        return Ok(false);
+    }
+
     fn validate_cache(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> error::Result<bool> {
         match fs::symlink_metadata(src_path) {
             Ok(m) => {
                 match fs::symlink_metadata(cache_path) {
                     Ok(m2) => {
-                        if m.mtime() < m2.mtime() {
+                        if m.mtime() < m2.mtime() && Handle::is_pristine(cache_path)? {
                             return Ok(true);
                         } else {
                             fs::remove_file(cache_path)?;
@@ -139,7 +152,10 @@ impl Handle {
             }
             Err(e) => {
                 if error::try_enoent(e)? {
-                    fs::remove_file(cache_path)?;
+                    // the source file doesn't exist, the cache file shouldn't either
+                    if let Err(e) = fs::remove_file(cache_path) {
+                        error::try_enoent(e)?;
+                    }
                     return Ok(true);
                 }
             }
@@ -179,6 +195,12 @@ impl Handle {
     pub fn write(&mut self, offset: u64, buf: &[u8]) -> error::Result<usize> {
         let nwant = buf.len();
         let mut bytes_written: usize = 0;
+
+        if !self.dirty {
+            // assumes that the metadata will hit the disk before the
+            // incoming data will, and not flushing
+            self.cache_file.set_xattr("user.catfs.pristine", &DIRTY)?;
+        }
 
         while bytes_written < nwant {
             match self.cache_file.write_at(
@@ -238,6 +260,7 @@ impl Handle {
             offset += nread as u64;
         }
 
+        self.cache_file.set_xattr("user.catfs.pristine", &PRISTINE)?;
         return Ok(());
     }
 }
