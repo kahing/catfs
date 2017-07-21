@@ -301,7 +301,7 @@ impl<'a> Filesystem for CatFS<'a> {
                 inode = store.get(ino);
             }
 
-            let inode = inode.lock().unwrap();
+            let mut inode = inode.lock().unwrap();
             match inode.open(flags) {
                 Ok(file) => {
                     let mut fh_store = s.fh_store.lock().unwrap();
@@ -468,6 +468,7 @@ impl<'a> Filesystem for CatFS<'a> {
                 return;
             }
 
+            debug!("<-- flush {:?}", inode.get_path());
             reply.ok();
         });
     }

@@ -3,7 +3,6 @@ extern crate xattr;
 
 use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use self::xattr::FileExt;
@@ -75,6 +74,7 @@ impl Handle {
         src_path: &AsRef<Path>,
         cache_path: &AsRef<Path>,
         flags: u32,
+        cache_valid_if_present: bool,
     ) -> error::Result<Handle> {
         // even if file is open for write only, I still need to be
         // able to read the src for read-modify-write
@@ -83,7 +83,7 @@ impl Handle {
             make_rdwr(&mut flags);
         }
 
-        let valid = Handle::validate_cache(src_path, cache_path)?;
+        let valid = Handle::validate_cache(src_path, cache_path, cache_valid_if_present)?;
         debug!(
             "{:?} {} a valid cache file for {:?}",
             cache_path.as_ref(),
@@ -104,8 +104,15 @@ impl Handle {
             }
         }
 
+        let src_file: File;
+        if valid && (flags & rlibc::O_ACCMODE) == rlibc::O_RDONLY {
+            src_file = Default::default();
+        } else {
+            src_file = File::open(src_path, flags, 0o666)?;
+        }
+
         let handle = Handle {
-            src_file: File::open(src_path, flags, 0o666)?,
+            src_file: src_file,
             cache_file: File::open(cache_path, cache_flags, 0o666)?,
             dirty: false,
         };
@@ -139,12 +146,16 @@ impl Handle {
         return Ok(false);
     }
 
-    fn validate_cache(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> error::Result<bool> {
+    fn validate_cache(
+        src_path: &AsRef<Path>,
+        cache_path: &AsRef<Path>,
+        cache_valid_if_present: bool,
+    ) -> error::Result<bool> {
         match fs::symlink_metadata(src_path) {
-            Ok(m) => {
+            Ok(_) => {
                 match fs::symlink_metadata(cache_path) {
-                    Ok(m2) => {
-                        if m.mtime() < m2.mtime() && Handle::is_pristine(cache_path)? {
+                    Ok(_) => {
+                        if cache_valid_if_present || Handle::is_pristine(cache_path)? {
                             return Ok(true);
                         } else {
                             fs::remove_file(cache_path)?;
@@ -241,7 +252,11 @@ impl Handle {
             self.dirty = false;
         }
         self.cache_file.flush()?;
-        self.src_file.flush()?;
+        // if file was opened for read only and cache is valid we
+        // might not have opened src_file
+        if self.src_file.valid() {
+            self.src_file.flush()?;
+        }
         return Ok(());
     }
 
@@ -277,8 +292,10 @@ impl Drop for Handle {
         if let Err(e) = self.cache_file.close() {
             error!("!close(cache) = {}", RError::from(e));
         }
-        if let Err(e) = self.src_file.close() {
-            error!("!close(src) = {}", RError::from(e));
+        if self.src_file.valid() {
+            if let Err(e) = self.src_file.close() {
+                error!("!close(src) = {}", RError::from(e));
+            }
         }
     }
 }

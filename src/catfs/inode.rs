@@ -24,6 +24,7 @@ pub struct Inode<'a> {
     path: PathBuf,
 
     attr: fuse::FileAttr,
+    cache_valid_if_present: bool,
 
     refcnt: u64,
 }
@@ -62,6 +63,7 @@ impl<'a> Inode<'a> {
             name: name,
             path: path,
             attr: attr,
+            cache_valid_if_present: false,
             refcnt: 1,
         };
     }
@@ -170,19 +172,30 @@ impl<'a> Inode<'a> {
         )?;
 
         let attr = Inode::lookup_path(&self.to_src_path().join(name))?;
-        let inode = Inode::new(
+        let mut inode = Inode::new(
             self.src_dir,
             self.cache_dir,
             name.to_os_string(),
             path,
             attr,
         );
+        // we just created this file, it's gotta be valid
+        inode.cache_valid_if_present = true;
 
         return Ok((inode, wh));
     }
 
-    pub fn open(&self, flags: u32) -> error::Result<file::Handle> {
-        return file::Handle::open(&self.to_src_path(), &self.to_cache_path(), flags);
+    pub fn open(&mut self, flags: u32) -> error::Result<file::Handle> {
+        let f = file::Handle::open(
+            &self.to_src_path(),
+            &self.to_cache_path(),
+            flags,
+            self.cache_valid_if_present,
+        )?;
+        // Handle::open deletes the cache file if it was invalid, so
+        // at this point it must be valid, even after we start writing to it
+        self.cache_valid_if_present = true;
+        return Ok(f);
     }
 
     pub fn unlink(&self, name: &OsStr) -> io::Result<()> {

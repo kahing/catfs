@@ -152,12 +152,8 @@ impl File {
         }
     }
 
-    fn valid(&self) -> io::Result<()> {
-        if self.fd == -1 {
-            return Err(io::Error::from_raw_os_error(libc::EBADF));
-        } else {
-            return Ok(());
-        }
+    pub fn valid(&self) -> bool {
+        return self.fd != -1;
     }
 
     pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
@@ -214,6 +210,12 @@ impl File {
     }
 }
 
+impl Default for File {
+    fn default() -> File {
+        File { fd: -1 }
+    }
+}
+
 impl Drop for File {
     fn drop(&mut self) {
         if self.fd != -1 {
@@ -241,8 +243,8 @@ impl FileExt for File {
 
 impl AsRawFd for File {
     fn as_raw_fd(&self) -> RawFd {
-        if let Err(e) = self.valid() {
-            error!("as_raw_fd called on invalid fd: {}", e);
+        if !self.valid() {
+            error!("as_raw_fd called on invalid fd");
         }
 
         return self.fd;
