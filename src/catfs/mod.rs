@@ -11,8 +11,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStrExt;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 
 use self::threadpool::ThreadPool;
@@ -30,20 +29,16 @@ use self::inode::Inode;
 
 #[derive(Default)]
 struct InodeStore<'a> {
-    inodes: HashMap<u64, Arc<Inode<'a>>>,
+    inodes: HashMap<u64, Arc<Mutex<Inode<'a>>>>,
     inodes_cache: HashMap<PathBuf, u64>,
 }
 
 impl<'a> InodeStore<'a> {
-    fn get(&self, ino: u64) -> &Arc<Inode<'a>> {
-        return self.inodes.get(&ino).unwrap();
+    fn get(&self, ino: u64) -> Arc<Mutex<Inode<'a>>> {
+        return self.inodes.get(&ino).unwrap().clone();
     }
 
-    fn get_mut(&mut self, ino: u64) -> &mut Arc<Inode<'a>> {
-        return self.inodes.get_mut(&ino).unwrap();
-    }
-
-    fn get_mut_by_path(&mut self, path: &Path) -> Option<&mut Arc<Inode<'a>>> {
+    fn get_mut_by_path(&mut self, path: &Path) -> Option<Arc<Mutex<Inode<'a>>>> {
         let ino: u64;
 
         if let Some(ino_ref) = self.inodes_cache.get(path) {
@@ -52,11 +47,12 @@ impl<'a> InodeStore<'a> {
             return None;
         }
 
-        return Some(self.get_mut(ino));
+        return Some(self.get(ino));
     }
 
     fn remove_ino(&mut self, ino: u64) {
         let inode = self.inodes.remove(&ino).unwrap();
+        let inode = inode.lock().unwrap();
         self.inodes_cache.remove(inode.get_path());
     }
 }
@@ -128,19 +124,23 @@ impl<'a> CatFS<'a> {
         );
         inode.use_ino(fuse::FUSE_ROOT_ID);
 
-        self.insert_inode(Arc::new(inode));
+        self.insert_inode(inode);
 
         return Ok(());
     }
 
-    fn insert_inode(&mut self, inode: Arc<Inode<'a>>) {
+    fn insert_inode(&mut self, inode: Inode<'a>) {
         let mut store = self.store.lock().unwrap();
-        let attr = inode.get_attr();
-        store.inodes.insert(attr.ino, inode.clone());
-        store.inodes_cache.insert(
-            inode.get_path().to_path_buf(),
-            attr.ino,
-        );
+        let ino: u64;
+        {
+            let attr = inode.get_attr();
+            ino = attr.ino;
+            store.inodes_cache.insert(
+                inode.get_path().to_path_buf(),
+                attr.ino,
+            );
+        }
+        store.inodes.insert(ino, Arc::new(Mutex::new(inode)));
     }
 
     fn remove_path(&mut self, path: &Path) {
@@ -151,15 +151,17 @@ impl<'a> CatFS<'a> {
 
 impl<'a> Filesystem for CatFS<'a> {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        let parent_inode: Arc<Inode<'a>>;
+        let parent_inode: Arc<Mutex<Inode<'a>>>;
         {
             let mut store = self.store.lock().unwrap();
-            parent_inode = store.get(parent).clone();
+            parent_inode = store.get(parent);
+            let parent_inode = parent_inode.lock().unwrap();
             let path = parent_inode.get_child_name(name);
 
             if let Some(ref mut inode) = store.get_mut_by_path(&path) {
+                let mut inode = inode.lock().unwrap();
                 reply.entry(&self.ttl, inode.get_attr(), 0);
-                Arc::get_mut(inode).unwrap().inc_ref();
+                inode.inc_ref();
                 debug!(
                     "<-- lookup {:?} = 0x{:016x}, {:?}",
                     inode.get_path(),
@@ -171,9 +173,9 @@ impl<'a> Filesystem for CatFS<'a> {
         }
 
         // TODO spawn a thread to do lookup
+        let parent_inode = parent_inode.lock().unwrap();
         match parent_inode.lookup(name) {
             Ok(inode) => {
-                let inode = Arc::new(inode);
                 reply.entry(&self.ttl, &inode.get_attr(), 0);
                 debug!(
                     "<-- lookup {:?} = 0x{:016x}, {:?}",
@@ -198,6 +200,7 @@ impl<'a> Filesystem for CatFS<'a> {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
+        let inode = inode.lock().unwrap();
         reply.attr(&self.ttl, inode.get_attr());
         debug!(
             "<-- getattr {} {:?} {} bytes",
@@ -211,8 +214,9 @@ impl<'a> Filesystem for CatFS<'a> {
         let mut store = self.store.lock().unwrap();
         let stale: bool;
         {
-            let mut inode = store.get_mut(ino);
-            stale = Arc::get_mut(inode).unwrap().deref(nlookup);
+            let inode = store.get(ino);
+            let mut inode = inode.lock().unwrap();
+            stale = inode.deref(nlookup);
         }
         if stale {
             store.remove_ino(ino);
@@ -222,6 +226,7 @@ impl<'a> Filesystem for CatFS<'a> {
     fn opendir(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
+        let inode = inode.lock().unwrap();
 
         match inode.opendir() {
             Ok(dir) => {
@@ -290,12 +295,13 @@ impl<'a> Filesystem for CatFS<'a> {
     fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         let s = make_self(self);
         self.tp.lock().unwrap().execute(move || {
-            let inode: Arc<Inode<'a>>;
+            let inode: Arc<Mutex<Inode<'static>>>;
             {
                 let store = s.store.lock().unwrap();
-                inode = store.get(ino).clone();
+                inode = store.get(ino);
             }
 
+            let inode = inode.lock().unwrap();
             match inode.open(flags) {
                 Ok(file) => {
                     let mut fh_store = s.fh_store.lock().unwrap();
@@ -354,12 +360,13 @@ impl<'a> Filesystem for CatFS<'a> {
         flags: u32,
         reply: ReplyCreate,
     ) {
-        let parent_inode: Arc<Inode<'a>>;
+        let parent_inode: Arc<Mutex<Inode<'a>>>;
         {
             let store = self.store.lock().unwrap();
-            parent_inode = store.get(parent).clone();
+            parent_inode = store.get(parent);
         }
 
+        let parent_inode = parent_inode.lock().unwrap();
         match parent_inode.create(name, mode) {
             Ok((inode, file)) => {
                 let fh: u64;
@@ -370,7 +377,6 @@ impl<'a> Filesystem for CatFS<'a> {
                     fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));
                 }
 
-                let inode = Arc::new(inode);
                 reply.created(&self.ttl, &inode.get_attr(), 0, fh, flags);
                 debug!("<-- create {:?} = {}", inode.get_path(), fh);
                 self.insert_inode(inode);
@@ -426,11 +432,10 @@ impl<'a> Filesystem for CatFS<'a> {
             nwritten
         );
         reply.written(nwritten as u32);
-        let mut store = self.store.lock().unwrap();
-        let mut inode = store.get_mut(ino);
-        Arc::get_mut(inode).unwrap().extend(
-            offset + (nwritten as u64),
-        );
+        let store = self.store.lock().unwrap();
+        let inode = store.get(ino);
+        let mut inode = inode.lock().unwrap();
+        inode.extend(offset + (nwritten as u64));
     }
 
     fn flush(&mut self, _req: &Request, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
@@ -452,11 +457,12 @@ impl<'a> Filesystem for CatFS<'a> {
                 }
             }
 
-            let mut store = s.store.lock().unwrap();
-            let mut inode = store.get_mut(ino);
+            let store = s.store.lock().unwrap();
+            let inode = store.get(ino);
+            let mut inode = inode.lock().unwrap();
 
             // refresh attr with the original file so it will be consistent with lookup
-            if let Err(e) = Arc::get_mut(inode).unwrap().refresh() {
+            if let Err(e) = inode.refresh() {
                 error!("<-- !flush {:?} = {}", inode.get_path(), e);
                 reply.error(e.raw_os_error().unwrap());
                 return;
@@ -483,12 +489,13 @@ impl<'a> Filesystem for CatFS<'a> {
     }
 
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        let parent_inode: Arc<Inode<'a>>;
+        let parent_inode: Arc<Mutex<Inode<'a>>>;
         {
             let store = self.store.lock().unwrap();
-            parent_inode = store.get(parent).clone();
+            parent_inode = store.get(parent);
         }
 
+        let parent_inode = parent_inode.lock().unwrap();
         if let Err(e) = parent_inode.unlink(name) {
             debug!(
                 "<-- !unlink {:?}/{:?} = {}",
@@ -505,12 +512,13 @@ impl<'a> Filesystem for CatFS<'a> {
     }
 
     fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        let parent_inode: Arc<Inode<'a>>;
+        let parent_inode: Arc<Mutex<Inode<'a>>>;
         {
             let store = self.store.lock().unwrap();
-            parent_inode = store.get(parent).clone();
+            parent_inode = store.get(parent);
         }
 
+        let parent_inode = parent_inode.lock().unwrap();
         if let Err(e) = parent_inode.rmdir(name) {
             debug!(
                 "<-- !rmdir {:?}/{:?} = {}",
