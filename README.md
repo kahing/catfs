@@ -41,6 +41,12 @@ them to `<to>` as they are accessed.
 
 # Benchmark
 
+Compare running catfs over sshfs vs sshfs. Topology is
+laptop - 802.11n - router - 1Gbps wired - desktop. Laptop has SSD
+whereas desktop has spinning rust.
+
+![Benchmark result](/bench/bench.catfs_vs_sshfs.png?raw=true "Benchmark")
+
 Compare running catfs with two local directories on the same
 filesystem with direct access. This is not a realistic use case but
 should give you an idea of the worst case slowdown.
