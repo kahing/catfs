@@ -303,4 +303,20 @@ unit_tests!{
         let v = xattr::get(&foo_cache, "user.catfs.pristine").unwrap().unwrap();
         assert_eq!(v, catfs::catfs::file::PRISTINE);
     }
+
+    fn create_pristine(f: &CatFSTests) {
+        let foo = Path::new(&f.mnt).join("foo");
+        {
+            let mut wh = OpenOptions::new().write(true).create(true)
+                .open(&foo).unwrap();
+            wh.write_all(b"hello world").unwrap();
+
+            // we haven't closed the file yet, but we should still be
+            // reading from it
+            let mut contents = String::new();
+            let mut rh = OpenOptions::new().read(true).open(&foo).unwrap();
+            rh.read_to_string(&mut contents).unwrap();
+            assert_eq!(contents, "hello world");
+        }
+    }
 }
