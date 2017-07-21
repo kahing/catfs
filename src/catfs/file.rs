@@ -31,6 +31,15 @@ fn make_rdwr(f: &mut u32) {
     *f = (*f & !rlibc::O_ACCMODE) | rlibc::O_RDWR;
 }
 
+fn maybe_unlink(path: &AsRef<Path>) -> io::Result<()> {
+    if let Err(e) = fs::remove_file(path) {
+        if !error::is_enoent(&e) {
+            return Err(e);
+        }
+    }
+    return Ok(());
+}
+
 impl Handle {
     pub fn create(
         src_path: &AsRef<Path>,
@@ -49,8 +58,14 @@ impl Handle {
             fs::create_dir_all(parent)?;
         }
 
+        let src_file = File::open(src_path, flags, mode)?;
+        // we are able to create the src file, then the cache file
+        // shouldn't be here, but it could be because of bug/crash,
+        // so unlink it first
+        maybe_unlink(cache_path)?;
+
         return Ok(Handle {
-            src_file: File::open(src_path, flags, mode)?,
+            src_file: src_file,
             cache_file: File::open(cache_path, cache_flags, mode)?,
             dirty: true,
         });
@@ -104,11 +119,7 @@ impl Handle {
     }
 
     pub fn unlink(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> io::Result<()> {
-        if let Err(e) = fs::remove_file(cache_path) {
-            if !error::is_enoent(&e) {
-                return Err(e);
-            }
-        }
+        maybe_unlink(cache_path)?;
         return fs::remove_file(src_path);
     }
 
@@ -150,10 +161,7 @@ impl Handle {
             Err(e) => {
                 if error::try_enoent(e)? {
                     // the source file doesn't exist, the cache file shouldn't either
-                    if let Err(e) = fs::remove_file(cache_path) {
-                        error::try_enoent(e)?;
-                    }
-                    return Ok(true);
+                    maybe_unlink(cache_path)?;
                 }
             }
         }

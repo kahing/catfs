@@ -322,8 +322,8 @@ impl<'a> Filesystem for CatFS<'a> {
         size: u32,
         reply: ReplyData,
     ) {
-        let mut fh_store = self.fh_store.lock().unwrap();
-        let file = fh_store.handles.get_mut(&fh).unwrap();
+        let fh_store = self.fh_store.lock().unwrap();
+        let file = fh_store.handles.get(&fh).unwrap();
         // TODO spawn a thread
         let mut buf: Vec<u8> = Vec::with_capacity(size as usize);
         buf.resize(size as usize, 0u8);
@@ -398,8 +398,8 @@ impl<'a> Filesystem for CatFS<'a> {
     ) {
         let nwritten: usize;
         {
-            let mut fh_store = self.fh_store.lock().unwrap();
-            let file = fh_store.handles.get_mut(&fh).unwrap();
+            let fh_store = self.fh_store.lock().unwrap();
+            let file = fh_store.handles.get(&fh).unwrap();
             let mut file = file.lock().unwrap();
             // TODO spawn a thread
             match file.write(offset, data) {
