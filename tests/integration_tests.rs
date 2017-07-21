@@ -248,6 +248,11 @@ unit_tests!{
         diff(&f.get_from(), &f.mnt);
     }
 
+    fn mkdir(f: &CatFSTests) {
+        let foo = f.mnt.join("foo");
+        fs::create_dir(&foo).unwrap();
+    }
+
     fn rmdir(f: &CatFSTests) {
         let dir2 = f.mnt.join("dir2");
         fs::remove_dir(&dir2).unwrap();

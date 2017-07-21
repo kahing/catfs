@@ -130,15 +130,6 @@ impl Handle {
         return fs::remove_file(src_path);
     }
 
-    pub fn rmdir(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> io::Result<()> {
-        if let Err(e) = fs::remove_dir(cache_path) {
-            if !error::is_enoent(&e) {
-                return Err(e);
-            }
-        }
-        return fs::remove_dir(src_path);
-    }
-
     fn is_pristine(cache_path: &AsRef<Path>) -> error::Result<bool> {
         if let Some(v) = xattr::get(cache_path, "user.catfs.pristine")? {
             return Ok(v == PRISTINE);

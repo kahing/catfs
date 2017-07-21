@@ -534,4 +534,30 @@ impl<'a> Filesystem for CatFS<'a> {
             self.remove_path(&parent_inode.get_path().join(name));
         }
     }
+
+    fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, mode: u32, reply: ReplyEntry) {
+        let parent_inode: Arc<Mutex<Inode<'a>>>;
+        {
+            let store = self.store.lock().unwrap();
+            parent_inode = store.get(parent);
+        }
+
+        let parent_inode = parent_inode.lock().unwrap();
+        match parent_inode.mkdir(name, mode) {
+            Ok(inode) => {
+                reply.entry(&self.ttl, inode.get_attr(), 0);
+                debug!("<-- mkdir {:?}/{:?}", parent_inode.get_path(), name);
+                self.insert_inode(inode);
+            }
+            Err(e) => {
+                debug!(
+                    "<-- !mkdir {:?}/{:?} = {}",
+                    parent_inode.get_path(),
+                    name,
+                    e
+                );
+                reply.error(e.raw_os_error().unwrap());
+            }
+        }
+    }
 }

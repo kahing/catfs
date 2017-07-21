@@ -122,6 +122,16 @@ pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<Dirent>> {
     }
 }
 
+pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+    let s = to_cstring(path);
+    let res = unsafe { libc::mkdir(s.as_ptr(), mode) };
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(());
+    }
+}
+
 pub struct File {
     fd: libc::c_int,
 }

@@ -1,5 +1,7 @@
 extern crate libc;
 
+use std::fs;
+use std::io;
 use std::path::Path;
 
 use catfs::error;
@@ -70,5 +72,18 @@ impl Handle {
                 None => return Ok(None),
             }
         }
+    }
+
+    pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+        rlibc::mkdir(path, mode)
+    }
+
+    pub fn rmdir(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> io::Result<()> {
+        if let Err(e) = fs::remove_dir(cache_path) {
+            if !error::is_enoent(&e) {
+                return Err(e);
+            }
+        }
+        return fs::remove_dir(src_path);
     }
 }

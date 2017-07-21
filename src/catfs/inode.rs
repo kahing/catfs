@@ -205,8 +205,25 @@ impl<'a> Inode<'a> {
         );
     }
 
+    pub fn mkdir(&self, name: &OsStr, mode: u32) -> error::Result<(Inode<'a>)> {
+        let path = self.get_child_name(name);
+        let src_path = self.to_src_path().join(name);
+        dir::Handle::mkdir(&src_path, mode)?;
+
+        let attr = Inode::lookup_path(&src_path)?;
+        let inode = Inode::new(
+            self.src_dir,
+            self.cache_dir,
+            name.to_os_string(),
+            path,
+            attr,
+        );
+
+        return Ok(inode);
+    }
+
     pub fn rmdir(&self, name: &OsStr) -> io::Result<()> {
-        return file::Handle::rmdir(
+        return dir::Handle::rmdir(
             &self.to_src_path().join(name),
             &self.to_cache_path().join(name),
         );
