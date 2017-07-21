@@ -5,7 +5,9 @@ Catfs is a caching filesystem written in Rust.
 # Overview
 
 Catfs allows you to have cached access to another (possibily remote)
-filesystem. Currently it only provides a data cache.
+filesystem. Caching semantic is read-ahead and write-through (see
+[Current Status](#current-status)). Currently it only provides a data
+cache.
 
 Catfs is ALPHA software. Don't use this if you value your data.
 
@@ -43,12 +45,17 @@ Licensed under the Apache License, Version 2.0
 
 Catfs is ALPHA software. Don't use this if you value your data.
 
+Entire file is cached if it's open for read, even if nothing is
+actually read.
+
+Data is first written to the cache and the entire file is always
+written back to the original filesystem on `close()`, so effectively
+it's a write-through cache. Note that even changing one byte will
+cause the entire file to be re-written.
+
 Paging in/writeback are done in background threads. All other requests
 are serviced on the same thread, so many operations could block each
 other.
-
-Data is always written back to the original filesystem on `flush()`,
-so effectively it's a write-through cache.
 
 Data is never evicted from cache even when local filesystem is full.
 
