@@ -7,7 +7,7 @@ Catfs is a caching filesystem written in Rust.
 Catfs allows you to have cached access to another (possibily remote)
 filesystem. Caching semantic is read-ahead and write-through (see
 [Current Status](#current-status)). Currently it only provides a data
-cache.
+cache and all metadata operations hit the source filesystem.
 
 Catfs is ALPHA software. Don't use this if you value your data.
 
@@ -34,6 +34,17 @@ $ catfs <from> <to> <mountpoint>
 
 Catfs will expose files in `<from>` under `<mountpoint>`, and cache
 them to `<to>` as they are accessed.
+
+# Benchmark
+
+Compare running catfs with two local directories on the same
+filesystem with direct access. This is not a realistic use case but
+should give you an idea of the worst case slowdown.
+
+![Benchmark result](/bench/bench.png?raw=true "Benchmark")
+
+Write is twice as slow as expected since we are writing twice the
+amount. However it's not clear why `ls` is so slow.
 
 # License
 
