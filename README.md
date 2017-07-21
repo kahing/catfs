@@ -13,7 +13,11 @@ Catfs is ALPHA software. Don't use this if you value your data.
 
 # Installation
 
-Building catfs requires [Cargo](http://doc.crates.io/).
+* On Linux, install via
+  [pre-built binaries](https://github.com/kahing/catfs/releases/). You
+  may also need to install fuse-utils first.
+
+* Or build from source which requires [Cargo](http://doc.crates.io/).
 
 ```ShellSession
 :~/catfs$ cargo build
