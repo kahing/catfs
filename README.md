@@ -88,3 +88,6 @@ Data is never evicted from cache even when local filesystem is full.
 # References
 
 * catfs is designed to work with [goofys](https://github.com/kahing/goofys/)
+* [FS-Cache](https://www.kernel.org/doc/Documentation/filesystems/caching/fscache.txt)
+  provides caching for some in kernel filesystems but doesn't support
+  other FUSE filesystems.
