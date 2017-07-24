@@ -5,12 +5,14 @@ extern crate xattr;
 use std::ffi::{CStr, CString, OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::io;
-use self::fuse::FileType;
+use std::mem;
 use std::path::Path;
+use std::ptr;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 use std::os::unix::fs::FileExt;
 
+use self::fuse::FileType;
 use self::xattr::FileExt as XattrFileExt;
 use catfs::error::RError;
 
@@ -80,7 +82,6 @@ fn array_to_osstring(cslice: &[libc::c_char]) -> OsString {
     return OsStr::from_bytes(s.to_bytes()).to_os_string();
 }
 
-
 impl Dirent {
     pub fn ino(&self) -> u64 {
         return self.en.d_ino;
@@ -132,6 +133,65 @@ pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
     }
 }
 
+pub fn pipe() -> io::Result<(libc::c_int, libc::c_int)> {
+    let mut p = [0; 2];
+    let res = unsafe { libc::pipe2(p.as_mut_ptr(), libc::O_CLOEXEC) };
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok((p[0], p[1]));
+    }
+}
+
+pub fn splice(
+    fd: libc::c_int,
+    off_self: i64,
+    other: libc::c_int,
+    off_other: i64,
+    len: usize,
+) -> io::Result<usize> {
+    let mut off_from = off_self;
+    let mut off_to = off_other;
+
+    let off_from_ptr = if off_from == -1 {
+        ptr::null()
+    } else {
+        (&mut off_from)
+    } as *mut i64;
+    let off_to_ptr = if off_to == -1 {
+        ptr::null()
+    } else {
+        (&mut off_to)
+    } as *mut i64;
+
+    let res = unsafe { libc::splice(fd, off_from_ptr, other, off_to_ptr, len, 0) };
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(res as usize);
+    }
+}
+
+pub fn close(fd: libc::c_int) -> io::Result<()> {
+    let res = unsafe { libc::close(fd) };
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(());
+    }
+}
+
+pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat> {
+    let mut st: libc::stat = unsafe { mem::zeroed() };
+
+    let res = unsafe { libc::fstat(fd, (&mut st) as *mut libc::stat) };
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(st);
+    }
+}
+
 pub struct File {
     fd: libc::c_int,
 }
@@ -164,6 +224,41 @@ impl File {
 
     pub fn valid(&self) -> bool {
         return self.fd != -1;
+    }
+
+    pub fn filesize(&self) -> io::Result<usize> {
+        let st = fstat(self.fd)?;
+        return Ok(st.st_size as usize);
+    }
+
+    pub fn truncate(&self, size: usize) -> io::Result<()> {
+        let res = unsafe { libc::ftruncate(self.fd, size as i64) };
+        if res < 0 {
+            return Err(io::Error::last_os_error());
+        } else {
+            return Ok(());
+        }
+    }
+
+    pub fn allocate(&self, offset: u64, len: usize) -> io::Result<()> {
+        let res = unsafe { libc::posix_fallocate(self.fd, offset as i64, len as i64) };
+        if res == 0 {
+            return Ok(());
+        } else {
+            return Err(io::Error::from_raw_os_error(res));
+        }
+    }
+
+    pub fn set_size(&self, size: usize) -> io::Result<()> {
+        let old_size = self.filesize()?;
+
+        if size > old_size {
+            self.allocate(old_size as u64, size - old_size)?;
+        } else if old_size > size {
+            self.truncate(size)?;
+        }
+
+        return Ok(());
     }
 
     pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
@@ -218,6 +313,14 @@ impl File {
             return Ok(());
         }
     }
+
+    pub fn as_raw_fd(&self) -> RawFd {
+        if !self.valid() {
+            error!("as_raw_fd called on invalid fd");
+        }
+
+        return self.fd;
+    }
 }
 
 impl Default for File {
@@ -253,11 +356,7 @@ impl FileExt for File {
 
 impl AsRawFd for File {
     fn as_raw_fd(&self) -> RawFd {
-        if !self.valid() {
-            error!("as_raw_fd called on invalid fd");
-        }
-
-        return self.fd;
+        File::as_raw_fd(self)
     }
 }
 

@@ -251,6 +251,49 @@ impl Handle {
         return Ok(());
     }
 
+    fn copy_user(rh: &File, wh: &File) -> error::Result<()> {
+        let mut buf = [0u8; 32 * 1024];
+        let mut offset = 0;
+        loop {
+            let nread = rh.read_at(&mut buf, offset)?;
+            if nread == 0 {
+                break;
+            }
+            wh.write_at(&buf[..nread], offset)?;
+            offset += nread as u64;
+        }
+        return Ok(());
+    }
+
+    fn copy_splice(rh: &File, wh: &File) -> error::Result<()> {
+        let (pin, pout) = rlibc::pipe()?;
+
+        let mut offset = 0;
+        loop {
+            let nread = rlibc::splice(rh.as_raw_fd(), offset, pout, -1, 128 * 1024)?;
+            if nread == 0 {
+                break;
+            }
+
+            let mut written = 0;
+            while written < nread {
+                let nxfer = rlibc::splice(pin, -1, wh.as_raw_fd(), offset, 128 * 1024)?;
+
+                written += nxfer;
+                offset += nxfer as i64;
+            }
+        }
+
+        if let Err(e) = rlibc::close(pin) {
+            rlibc::close(pout)?;
+            return Err(RError::from(e));
+        } else {
+            rlibc::close(pout)?;
+        }
+
+        return Ok(());
+    }
+
     fn copy(&self, to_cache: bool) -> error::Result<()> {
         let rh: &File;
         let wh: &File;
@@ -262,15 +305,12 @@ impl Handle {
             wh = &self.src_file;
         }
 
-        let mut buf = [0u8; 32 * 1024];
-        let mut offset = 0;
-        loop {
-            let nread = rh.read_at(&mut buf, offset)?;
-            if nread == 0 {
-                break;
+        wh.set_size(rh.filesize()?)?;
+
+        if let Err(e) = Handle::copy_splice(rh, wh) {
+            if e.raw_os_error().unwrap() == libc::EINVAL {
+                Handle::copy_user(rh, wh)?;
             }
-            wh.write_at(&buf[..nread], offset)?;
-            offset += nread as u64;
         }
 
         self.cache_file.set_xattr("user.catfs.pristine", &PRISTINE)?;
