@@ -337,12 +337,6 @@ impl<'a> Filesystem for CatFS<'a> {
         match file.read(offset, &mut buf) {
             Ok(nread) => {
                 reply.data(&buf[..nread]);
-                debug!(
-                    "<-- read {} {:?} = {}",
-                    fh,
-                    OsStr::from_bytes(&buf[..cmp::min(32, nread)]),
-                    nread
-                );
             }
             Err(e) => {
                 debug!("<-- !read {} = {}", fh, e);
@@ -424,13 +418,6 @@ impl<'a> Filesystem for CatFS<'a> {
             }
         }
 
-        debug!(
-            "<-- write 0x{:016x} {:?} @ {} = {}",
-            fh,
-            OsStr::from_bytes(&data[..cmp::min(32, data.len())]),
-            offset,
-            nwritten
-        );
         reply.written(nwritten as u32);
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
