@@ -1,71 +1,75 @@
 extern crate fuse;
+extern crate libc;
 extern crate time;
+
+use self::time::{Duration, Timespec};
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
-use std::fs;
 use std::io;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use catfs::dir;
 use catfs::error;
 use catfs::file;
 use catfs::rlibc;
-use self::time::Timespec;
 
 #[derive(Clone)]
-pub struct Inode<'a> {
-    src_dir: &'a Path,
-    cache_dir: &'a Path,
+pub struct Inode {
+    src_dir: RawFd,
+    cache_dir: RawFd,
 
     name: OsString,
     path: PathBuf,
 
     attr: fuse::FileAttr,
+    time: Timespec,
     cache_valid_if_present: bool,
 
     refcnt: u64,
 }
 
-fn to_filetype(t: fs::FileType) -> fuse::FileType {
-    if t.is_dir() {
-        return fuse::FileType::Directory;
-    } else if t.is_symlink() {
-        return fuse::FileType::Symlink;
-    } else {
-        return fuse::FileType::RegularFile;
+fn to_filetype(t: u32) -> fuse::FileType {
+    match t & libc::S_IFMT {
+        libc::S_IFLNK => fuse::FileType::Symlink,
+        libc::S_IFREG => fuse::FileType::RegularFile,
+        libc::S_IFBLK => fuse::FileType::BlockDevice,
+        libc::S_IFDIR => fuse::FileType::Directory,
+        libc::S_IFCHR => fuse::FileType::CharDevice,
+        libc::S_IFIFO => fuse::FileType::NamedPipe,
+        v => panic!("unknown type: {}", v),
     }
 }
 
 
-#[allow(dead_code)]
-fn now() -> Timespec {
-    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    return Timespec {
-        sec: d.as_secs() as i64,
-        nsec: d.subsec_nanos() as i32,
-    };
-}
-
-impl<'a> Inode<'a> {
-    pub fn new<P: AsRef<Path> + ?Sized>(
-        src_dir: &'a P,
-        cache_dir: &'a P,
+impl Inode {
+    pub fn new(
+        src_dir: RawFd,
+        cache_dir: RawFd,
         name: OsString,
         path: PathBuf,
         attr: fuse::FileAttr,
-    ) -> Inode<'a> {
+    ) -> Inode {
         return Inode {
-            src_dir: src_dir.as_ref(),
-            cache_dir: cache_dir.as_ref(),
+            src_dir: src_dir,
+            cache_dir: cache_dir,
             name: name,
             path: path,
             attr: attr,
+            time: time::get_time(),
             cache_valid_if_present: false,
             refcnt: 1,
         };
+    }
+
+    pub fn take(&mut self, other: Inode) {
+        self.attr = other.attr;
+        self.time = other.time;
+    }
+
+    pub fn not_expired(&self, ttl: &Duration) -> bool {
+        (time::get_time() - self.time) > *ttl
     }
 
     pub fn get_child_name(&self, name: &OsStr) -> PathBuf {
@@ -76,14 +80,6 @@ impl<'a> Inode<'a> {
 
     pub fn get_path(&self) -> &Path {
         return &self.path;
-    }
-
-    pub fn to_src_path(&self) -> PathBuf {
-        return self.src_dir.join(&self.path);
-    }
-
-    pub fn to_cache_path(&self) -> PathBuf {
-        return self.cache_dir.join(&self.path);
     }
 
     pub fn get_attr(&self) -> &fuse::FileAttr {
@@ -104,48 +100,47 @@ impl<'a> Inode<'a> {
         }
     }
 
-    pub fn lookup_path(path: &AsRef<Path>) -> io::Result<fuse::FileAttr> {
-        // misnomer as symlink_metadata is the one that does NOT follow symlinks
-        let m = fs::symlink_metadata(path)?;
+    pub fn lookup_path(dir: RawFd, path: &AsRef<Path>) -> io::Result<fuse::FileAttr> {
+        let st = rlibc::fstatat(dir, path)?;
         let attr = fuse::FileAttr {
-            ino: m.ino(),
-            size: m.len(),
-            blocks: m.blocks(),
+            ino: st.st_ino,
+            size: st.st_size as u64,
+            blocks: st.st_blocks as u64,
             atime: Timespec {
-                sec: m.atime(),
-                nsec: m.atime_nsec() as i32,
+                sec: st.st_atime,
+                nsec: st.st_atime_nsec as i32,
             },
             mtime: Timespec {
-                sec: m.mtime(),
-                nsec: m.mtime_nsec() as i32,
+                sec: st.st_mtime,
+                nsec: st.st_mtime_nsec as i32,
             },
             ctime: Timespec {
-                sec: m.ctime(),
-                nsec: m.ctime_nsec() as i32,
+                sec: st.st_ctime,
+                nsec: st.st_ctime_nsec as i32,
             },
             crtime: Timespec {
-                sec: m.ctime(),
-                nsec: m.ctime_nsec() as i32,
+                sec: st.st_ctime,
+                nsec: st.st_ctime_nsec as i32,
             },
-            kind: to_filetype(m.file_type()),
-            perm: m.mode() as u16,
-            nlink: m.nlink() as u32,
-            uid: m.uid(),
-            gid: m.gid(),
-            rdev: m.rdev() as u32,
+            kind: to_filetype(st.st_mode),
+            perm: (st.st_mode & !libc::S_IFMT) as u16,
+            nlink: st.st_nlink as u32,
+            uid: st.st_uid,
+            gid: st.st_gid,
+            rdev: st.st_rdev as u32,
             flags: 0,
         };
         return Ok(attr);
     }
 
-    pub fn refresh(&mut self) -> error::Result<()> {
-        self.attr = Inode::lookup_path(&self.to_src_path())?;
+    pub fn refresh(&mut self) -> io::Result<()> {
+        self.attr = Inode::lookup_path(self.src_dir, &self.path)?;
         return Ok(());
     }
 
-    pub fn lookup(&self, name: &OsStr) -> error::Result<Inode<'a>> {
+    pub fn lookup(&self, name: &OsStr) -> error::Result<Inode> {
         let path = self.get_child_name(name);
-        match Inode::lookup_path(&self.to_src_path().join(name)) {
+        match Inode::lookup_path(self.src_dir, &path) {
             Ok(attr) => {
                 return Ok(Inode::new(
                     self.src_dir,
@@ -159,19 +154,14 @@ impl<'a> Inode<'a> {
         }
     }
 
-    pub fn create(&self, name: &OsStr, mode: u32) -> error::Result<(Inode<'a>, file::Handle)> {
+    pub fn create(&self, name: &OsStr, mode: u32) -> error::Result<(Inode, file::Handle)> {
         let path = self.get_child_name(name);
 
         let flags = rlibc::O_WRONLY | rlibc::O_CREAT | rlibc::O_EXCL;
 
-        let wh = file::Handle::create(
-            &self.to_src_path().join(name),
-            &self.to_cache_path().join(name),
-            flags,
-            mode,
-        )?;
+        let wh = file::Handle::create(self.src_dir, self.cache_dir, &path, flags, mode)?;
 
-        let attr = Inode::lookup_path(&self.to_src_path().join(name))?;
+        let attr = Inode::lookup_path(self.src_dir, &path)?;
         let mut inode = Inode::new(
             self.src_dir,
             self.cache_dir,
@@ -187,8 +177,9 @@ impl<'a> Inode<'a> {
 
     pub fn open(&mut self, flags: u32) -> error::Result<file::Handle> {
         let f = file::Handle::open(
-            &self.to_src_path(),
-            &self.to_cache_path(),
+            self.src_dir,
+            self.cache_dir,
+            &self.path,
             flags,
             self.cache_valid_if_present,
         )?;
@@ -199,18 +190,15 @@ impl<'a> Inode<'a> {
     }
 
     pub fn unlink(&self, name: &OsStr) -> io::Result<()> {
-        return file::Handle::unlink(
-            &self.to_src_path().join(name),
-            &self.to_cache_path().join(name),
-        );
+        return file::Handle::unlink(self.src_dir, self.cache_dir, &self.get_child_name(name));
     }
 
-    pub fn mkdir(&self, name: &OsStr, mode: u32) -> error::Result<(Inode<'a>)> {
+    pub fn mkdir(&self, name: &OsStr, mode: u32) -> error::Result<(Inode)> {
         let path = self.get_child_name(name);
-        let src_path = self.to_src_path().join(name);
-        dir::Handle::mkdir(&src_path, mode)?;
 
-        let attr = Inode::lookup_path(&src_path)?;
+        rlibc::mkdirat(self.src_dir, &path, mode)?;
+
+        let attr = Inode::lookup_path(self.src_dir, &path)?;
         let inode = Inode::new(
             self.src_dir,
             self.cache_dir,
@@ -223,26 +211,36 @@ impl<'a> Inode<'a> {
     }
 
     pub fn rmdir(&self, name: &OsStr) -> io::Result<()> {
-        return dir::Handle::rmdir(
-            &self.to_src_path().join(name),
-            &self.to_cache_path().join(name),
-        );
+        return dir::Handle::rmdirat(self.src_dir, self.cache_dir, &self.get_child_name(name));
     }
 
     pub fn opendir(&self) -> error::Result<dir::Handle> {
-        return dir::Handle::open(&self.to_src_path());
+        return dir::Handle::openat(self.src_dir, &self.path);
     }
 
     pub fn use_ino(&mut self, ino: u64) {
         self.attr.ino = ino;
     }
 
-    pub fn inc_ref(&mut self) {
+    pub fn inc_ref(&mut self) -> u64 {
         self.refcnt += 1;
+        return self.refcnt;
+    }
+
+    pub fn get_refcnt(&self) -> u64 {
+        return self.refcnt;
     }
 
     // return stale
     pub fn deref(&mut self, n: u64) -> bool {
+        if self.refcnt < n {
+            panic!(
+                "ino 0x{:016x} refcnt {} deref {}",
+                self.attr.ino,
+                self.refcnt,
+                n
+            );
+        }
         self.refcnt -= n;
         return self.refcnt == 0;
     }

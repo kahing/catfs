@@ -37,8 +37,8 @@ trait Fixture {
 struct CatFSTests<'a> {
     prefix: PathBuf,
     mnt: PathBuf,
-    src: &'static PathBuf,
-    cache: &'static PathBuf,
+    src: PathBuf,
+    cache: PathBuf,
     session: Option<fuse::BackgroundSession<'a>>,
     nested: Option<Box<CatFSTests<'a>>>,
 }
@@ -60,14 +60,6 @@ fn copy_all(dir1: &AsRef<Path>, dir2: &AsRef<Path>) -> error::Result<()> {
     return Ok(());
 }
 
-fn make_static<T: std::fmt::Debug>(t: T) -> &'static T {
-    // not sure why I need to box this
-    let b = Box::new(t);
-    let r = Box::into_raw(b);
-    let p: &'static T = unsafe { std::mem::transmute(r) };
-    return p;
-}
-
 impl<'a> CatFSTests<'a> {
     fn get_orig_dir() -> PathBuf {
         let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
@@ -83,7 +75,7 @@ impl<'a> CatFSTests<'a> {
     }
 
     fn mount(&self) -> error::Result<fuse::BackgroundSession<'a>> {
-        let fs = CatFS::new(self.src, self.cache)?;
+        let fs = CatFS::new(&self.src, &self.cache)?;
 
         return Ok(unsafe { fuse::spawn_mount(fs, &self.mnt, &[])? });
     }
@@ -110,8 +102,8 @@ impl<'a> Fixture for CatFSTests<'a> {
         let mut t = CatFSTests {
             prefix: prefix,
             mnt: mnt,
-            src: make_static(resources),
-            cache: make_static(cache),
+            src: resources,
+            cache: cache,
             session: Default::default(),
             nested: Default::default(),
         };
@@ -136,8 +128,8 @@ impl<'a> Fixture for CatFSTests<'a> {
                 let mut t2 = CatFSTests {
                     prefix: t.prefix.clone(),
                     mnt: mnt2,
-                    src: make_static(mnt),
-                    cache: make_static(cache2),
+                    src: mnt,
+                    cache: cache2,
                     session: Default::default(),
                     nested: Some(Box::new(t)),
                 };
@@ -258,7 +250,7 @@ unit_tests!{
         diff(&f.get_from(), &f.mnt);
     }
 
-    fn unlink(f: &CatFSTests) {
+    fn unlink_one(f: &CatFSTests) {
         let file1 = f.mnt.join("dir1/file1");
         fs::remove_file(&file1).unwrap();
         if let Err(e) = fs::symlink_metadata(&file1) {

@@ -2,6 +2,7 @@ extern crate libc;
 
 use std::fs;
 use std::io;
+use std::os::unix::io::RawFd;
 use std::path::Path;
 
 use catfs::error;
@@ -27,10 +28,30 @@ impl Drop for Handle {
     }
 }
 
+#[allow(dead_code)]
+pub fn openpath(path: &AsRef<Path>) -> io::Result<RawFd> {
+    rlibc::open(&path, rlibc::O_PATH, 0)
+}
+
 impl Handle {
+    pub fn openat(dir: RawFd, path: &AsRef<Path>) -> error::Result<Handle> {
+        let fd: RawFd;
+        if path.as_ref() == Path::new("") {
+            fd = rlibc::openat(dir, &".", rlibc::O_RDONLY, 0)?;
+        } else {
+            fd = rlibc::openat(dir, &path, rlibc::O_RDONLY, 0)?;
+        }
+        return Ok(Handle {
+            dh: rlibc::fdopendir(fd)?,
+            offset: 0,
+            entry: Default::default(),
+            entry_valid: false,
+        });
+    }
+
+    #[allow(dead_code)]
     pub fn open(path: &AsRef<Path>) -> error::Result<Handle> {
-        debug!("opendir {:?}", path.as_ref());
-        let dh = rlibc::opendir(path)?;
+        let dh = rlibc::opendir(&path)?;
         return Ok(Handle {
             dh: dh,
             offset: 0,
@@ -75,10 +96,22 @@ impl Handle {
         }
     }
 
+    #[allow(dead_code)]
     pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
         rlibc::mkdir(path, mode)
     }
 
+    pub fn rmdirat(src_dir: RawFd, cache_dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
+        if let Err(e) = rlibc::unlinkat(cache_dir, path, libc::AT_REMOVEDIR as u32) {
+            if !error::is_enoent(&e) {
+                return Err(e);
+            }
+        }
+
+        return rlibc::unlinkat(src_dir, path, libc::AT_REMOVEDIR as u32);
+    }
+
+    #[allow(dead_code)]
     pub fn rmdir(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> io::Result<()> {
         if let Err(e) = fs::remove_dir(cache_path) {
             if !error::is_enoent(&e) {

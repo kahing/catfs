@@ -6,16 +6,18 @@ extern crate time;
 use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty,
                  ReplyDirectory, ReplyData, ReplyWrite, ReplyCreate};
 
+use self::time::Duration;
+
 use std::cmp;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::io::RawFd;
 use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 
 use self::threadpool::ThreadPool;
-use self::time::Timespec;
 
 pub mod error;
 pub mod file;
@@ -28,17 +30,17 @@ mod substr;
 use self::inode::Inode;
 
 #[derive(Default)]
-struct InodeStore<'a> {
-    inodes: HashMap<u64, Arc<Mutex<Inode<'a>>>>,
+struct InodeStore {
+    inodes: HashMap<u64, Arc<Mutex<Inode>>>,
     inodes_cache: HashMap<PathBuf, u64>,
 }
 
-impl<'a> InodeStore<'a> {
-    fn get(&self, ino: u64) -> Arc<Mutex<Inode<'a>>> {
+impl InodeStore {
+    fn get(&self, ino: u64) -> Arc<Mutex<Inode>> {
         return self.inodes.get(&ino).unwrap().clone();
     }
 
-    fn get_mut_by_path(&mut self, path: &Path) -> Option<Arc<Mutex<Inode<'a>>>> {
+    fn get_mut_by_path(&mut self, path: &Path) -> Option<Arc<Mutex<Inode>>> {
         let ino: u64;
 
         if let Some(ino_ref) = self.inodes_cache.get(path) {
@@ -71,36 +73,49 @@ impl<T> Default for HandleStore<T> {
     }
 }
 
-pub struct CatFS<'a> {
-    from: &'a Path,
-    cache: &'a Path,
+pub struct CatFS {
+    from: PathBuf,
+    cache: PathBuf,
+    src_dir: RawFd,
+    cache_dir: RawFd,
 
-    ttl: Timespec,
-    store: Mutex<InodeStore<'a>>,
+    ttl: Duration,
+    store: Mutex<InodeStore>,
     dh_store: Mutex<HandleStore<dir::Handle>>,
     fh_store: Mutex<HandleStore<Arc<Mutex<file::Handle>>>>,
     tp: Mutex<ThreadPool>,
 }
 
-impl<'a> Drop for CatFS<'a> {
+impl Drop for CatFS {
     fn drop(&mut self) {
         self.tp.lock().unwrap().join();
+        if let Err(e) = rlibc::close(self.src_dir) {
+            error!("!close({}) = {}", self.src_dir, error::RError::from(e));
+        }
+        if let Err(e) = rlibc::close(self.cache_dir) {
+            error!("!close({}) = {}", self.cache_dir, error::RError::from(e));
+        }
     }
 }
 
 // only safe to use when we know the return value will never be used
 // before the fs instance is dropped, for example if we are spawning
 // new threads, since drop() waits for the threads to finish first
-fn make_self<'a>(s: &mut CatFS<'a>) -> &'static CatFS<'static> {
+fn make_self(s: &mut CatFS) -> &'static CatFS {
     return unsafe { ::std::mem::transmute(s) };
 }
 
-impl<'a> CatFS<'a> {
-    pub fn new(from: &'a AsRef<Path>, to: &'a AsRef<Path>) -> error::Result<CatFS<'a>> {
+impl CatFS {
+    pub fn new(from: &AsRef<Path>, to: &AsRef<Path>) -> error::Result<CatFS> {
+        let src_dir = rlibc::open(from, rlibc::O_RDONLY, 0)?;
+        let cache_dir = rlibc::open(to, rlibc::O_RDONLY, 0)?;
+
         let mut catfs = CatFS {
-            from: from.as_ref(),
-            cache: to.as_ref(),
-            ttl: Timespec { sec: 0, nsec: 0 },
+            from: from.as_ref().to_path_buf(),
+            cache: to.as_ref().to_path_buf(),
+            src_dir: src_dir,
+            cache_dir: cache_dir,
+            ttl: Duration::zero(),
             store: Mutex::new(Default::default()),
             dh_store: Mutex::new(Default::default()),
             fh_store: Mutex::new(Default::default()),
@@ -114,10 +129,11 @@ impl<'a> CatFS<'a> {
     }
 
     fn make_root(&mut self) -> error::Result<()> {
-        let root_attr = Inode::lookup_path(&self.from)?;
+        let root_attr = Inode::lookup_path(self.src_dir, &self.from)?;
+
         let mut inode = Inode::new(
-            self.from,
-            self.cache,
+            self.src_dir,
+            self.cache_dir,
             OsString::new(),
             PathBuf::new(),
             root_attr,
@@ -129,7 +145,7 @@ impl<'a> CatFS<'a> {
         return Ok(());
     }
 
-    fn insert_inode(&mut self, inode: Inode<'a>) {
+    fn insert_inode(&mut self, inode: Inode) {
         let mut store = self.store.lock().unwrap();
         let ino: u64;
         {
@@ -147,50 +163,86 @@ impl<'a> CatFS<'a> {
         let mut store = self.store.lock().unwrap();
         store.inodes_cache.remove(path);
     }
+
+    fn ttl_now(&self) -> time::Timespec {
+        return time::get_time() + self.ttl;
+    }
 }
 
-impl<'a> Filesystem for CatFS<'a> {
+impl Filesystem for CatFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        let parent_inode: Arc<Mutex<Inode<'a>>>;
+        let parent_inode: Arc<Mutex<Inode>>;
+        let mut old_inode: Option<Arc<Mutex<Inode>>> = None;
+        let path: PathBuf;
         {
             let mut store = self.store.lock().unwrap();
             parent_inode = store.get(parent);
             let parent_inode = parent_inode.lock().unwrap();
-            let path = parent_inode.get_child_name(name);
+            path = parent_inode.get_child_name(name);
+            if let Some(ref mut i) = store.get_mut_by_path(&path) {
+                old_inode = Some(i.clone());
+                let mut inode = i.lock().unwrap();
+                let refcnt = inode.inc_ref();
 
-            if let Some(ref mut inode) = store.get_mut_by_path(&path) {
-                let mut inode = inode.lock().unwrap();
-                reply.entry(&self.ttl, inode.get_attr(), 0);
-                inode.inc_ref();
-                debug!(
-                    "<-- lookup {:?} = 0x{:016x}, {:?}",
-                    inode.get_path(),
-                    inode.get_ino(),
-                    inode.get_kind(),
-                );
-                return;
+                if inode.not_expired(&self.ttl) {
+                    reply.entry(&self.ttl_now(), inode.get_attr(), 0);
+                    debug!(
+                        "<-- lookup {:?} = 0x{:016x}, {:?} refcnt {}",
+                        inode.get_path(),
+                        inode.get_ino(),
+                        inode.get_kind(),
+                        refcnt
+                    );
+                    return;
+                } else {
+                    debug!(
+                        "<-- lookup {:?} = 0x{:016x}, {:?} refcnt {} expired",
+                        inode.get_path(),
+                        inode.get_ino(),
+                        inode.get_kind(),
+                        refcnt
+                    );
+                }
             }
         }
 
         // TODO spawn a thread to do lookup
         let parent_inode = parent_inode.lock().unwrap();
         match parent_inode.lookup(name) {
-            Ok(inode) => {
-                reply.entry(&self.ttl, &inode.get_attr(), 0);
-                debug!(
-                    "<-- lookup {:?} = 0x{:016x}, {:?}",
-                    inode.get_path(),
-                    inode.get_ino(),
-                    inode.get_kind()
-                );
-                self.insert_inode(inode);
+            Ok(new_inode) => {
+                if let Some(inode) = old_inode {
+                    let mut inode = inode.lock().unwrap();
+                    inode.take(new_inode);
+                    reply.entry(&self.ttl_now(), &inode.get_attr(), 0);
+                    debug!(
+                        "<-- lookup {:?} = 0x{:016x}, {:?} refcnt {}",
+                        inode.get_path(),
+                        inode.get_ino(),
+                        inode.get_kind(),
+                        inode.get_refcnt(),
+                    );
+                } else {
+                    reply.entry(&self.ttl_now(), &new_inode.get_attr(), 0);
+                    debug!(
+                        "<-- lookup {:?} = 0x{:016x}, {:?} refcnt *1",
+                        new_inode.get_path(),
+                        new_inode.get_ino(),
+                        new_inode.get_kind()
+                    );
+                    self.insert_inode(new_inode);
+                }
             }
             Err(e) => {
-                debug!(
-                    "<-- !lookup {:?} = {}",
-                    parent_inode.get_child_name(name),
-                    e
-                );
+                if let Some(inode) = old_inode {
+                    let mut inode = inode.lock().unwrap();
+                    let stale = inode.deref(1);
+                    if stale {
+                        let mut store = self.store.lock().unwrap();
+                        store.remove_ino(inode.get_attr().ino);
+                        debug!("<-- expired 0x{:016x}", inode.get_attr().ino);
+                    }
+                }
+                debug!("<-- !lookup {:?} = {}", path, e);
                 reply.error(error::errno(&e));
             }
         }
@@ -201,7 +253,7 @@ impl<'a> Filesystem for CatFS<'a> {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
         let inode = inode.lock().unwrap();
-        reply.attr(&self.ttl, inode.get_attr());
+        reply.attr(&self.ttl_now(), inode.get_attr());
         debug!(
             "<-- getattr {} {:?} {} bytes",
             ino,
@@ -219,6 +271,7 @@ impl<'a> Filesystem for CatFS<'a> {
             stale = inode.deref(nlookup);
         }
         if stale {
+            debug!("<-- forgot 0x{:016x}", ino);
             store.remove_ino(ino);
         }
     }
@@ -295,7 +348,7 @@ impl<'a> Filesystem for CatFS<'a> {
     fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
         let s = make_self(self);
         self.tp.lock().unwrap().execute(move || {
-            let inode: Arc<Mutex<Inode<'static>>>;
+            let inode: Arc<Mutex<Inode>>;
             {
                 let store = s.store.lock().unwrap();
                 inode = store.get(ino);
@@ -354,7 +407,7 @@ impl<'a> Filesystem for CatFS<'a> {
         flags: u32,
         reply: ReplyCreate,
     ) {
-        let parent_inode: Arc<Mutex<Inode<'a>>>;
+        let parent_inode: Arc<Mutex<Inode>>;
         {
             let store = self.store.lock().unwrap();
             parent_inode = store.get(parent);
@@ -371,7 +424,7 @@ impl<'a> Filesystem for CatFS<'a> {
                     fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));
                 }
 
-                reply.created(&self.ttl, &inode.get_attr(), 0, fh, flags);
+                reply.created(&self.ttl_now(), &inode.get_attr(), 0, fh, flags);
                 debug!("<-- create {:?} = {}", inode.get_path(), fh);
                 self.insert_inode(inode);
             }
@@ -477,30 +530,26 @@ impl<'a> Filesystem for CatFS<'a> {
     }
 
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        let parent_inode: Arc<Mutex<Inode<'a>>>;
+        let parent_inode: Arc<Mutex<Inode>>;
         {
             let store = self.store.lock().unwrap();
             parent_inode = store.get(parent);
         }
 
         let parent_inode = parent_inode.lock().unwrap();
+        let path = parent_inode.get_child_name(name);
         if let Err(e) = parent_inode.unlink(name) {
-            debug!(
-                "<-- !unlink {:?}/{:?} = {}",
-                parent_inode.get_path(),
-                name,
-                e
-            );
+            debug!("<-- !unlink {:?} = {}", path, e);
             reply.error(e.raw_os_error().unwrap());
         } else {
-            debug!("<-- unlink {:?}/{:?}", parent_inode.get_path(), name);
+            self.remove_path(&path);
+            debug!("<-- unlink {:?}", path);
             reply.ok();
-            self.remove_path(&parent_inode.get_path().join(name));
         }
     }
 
     fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        let parent_inode: Arc<Mutex<Inode<'a>>>;
+        let parent_inode: Arc<Mutex<Inode>>;
         {
             let store = self.store.lock().unwrap();
             parent_inode = store.get(parent);
@@ -523,7 +572,7 @@ impl<'a> Filesystem for CatFS<'a> {
     }
 
     fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, mode: u32, reply: ReplyEntry) {
-        let parent_inode: Arc<Mutex<Inode<'a>>>;
+        let parent_inode: Arc<Mutex<Inode>>;
         {
             let store = self.store.lock().unwrap();
             parent_inode = store.get(parent);
@@ -532,7 +581,7 @@ impl<'a> Filesystem for CatFS<'a> {
         let parent_inode = parent_inode.lock().unwrap();
         match parent_inode.mkdir(name, mode) {
             Ok(inode) => {
-                reply.entry(&self.ttl, inode.get_attr(), 0);
+                reply.entry(&self.ttl_now(), inode.get_attr(), 0);
                 debug!("<-- mkdir {:?}/{:?}", parent_inode.get_path(), name);
                 self.insert_inode(inode);
             }

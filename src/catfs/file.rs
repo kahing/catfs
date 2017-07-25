@@ -1,9 +1,9 @@
 extern crate libc;
 extern crate xattr;
 
-use std::fs;
 use std::io;
-use std::path::Path;
+use std::os::unix::io::RawFd;
+use std::path::{Component, Path, PathBuf};
 
 use self::xattr::FileExt;
 
@@ -30,8 +30,8 @@ fn make_rdwr(f: &mut u32) {
     *f = (*f & !rlibc::O_ACCMODE) | rlibc::O_RDWR;
 }
 
-fn maybe_unlink(path: &AsRef<Path>) -> io::Result<()> {
-    if let Err(e) = fs::remove_file(path) {
+fn maybe_unlinkat(dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
+    if let Err(e) = rlibc::unlinkat(dir, path, 0) {
         if !error::is_enoent(&e) {
             return Err(e);
         }
@@ -39,10 +39,29 @@ fn maybe_unlink(path: &AsRef<Path>) -> io::Result<()> {
     return Ok(());
 }
 
+fn mkdirat_all(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+    let mut p = PathBuf::new();
+
+    for c in path.as_ref().components() {
+        if let Component::Normal(n) = c {
+            p.push(n);
+
+            if let Err(e) = rlibc::mkdirat(dir, &p, mode) {
+                if e.raw_os_error().unwrap() != libc::EEXIST {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    return Ok(());
+}
+
 impl Handle {
     pub fn create(
-        src_path: &AsRef<Path>,
-        cache_path: &AsRef<Path>,
+        src_dir: RawFd,
+        cache_dir: RawFd,
+        path: &AsRef<Path>,
         flags: u32,
         mode: u32,
     ) -> error::Result<Handle> {
@@ -53,26 +72,27 @@ impl Handle {
         }
         //debug!("create {:b} {:b} {:#o}", flags, cache_flags, mode);
 
-        if let Some(parent) = cache_path.as_ref().parent() {
-            fs::create_dir_all(parent)?;
+        if let Some(parent) = path.as_ref().parent() {
+            mkdirat_all(cache_dir, &parent, 0o777)?;
         }
 
-        let src_file = File::open(src_path, flags, mode)?;
+        let src_file = File::openat(src_dir, path, flags, mode)?;
         // we are able to create the src file, then the cache file
         // shouldn't be here, but it could be because of bug/crash,
         // so unlink it first
-        maybe_unlink(cache_path)?;
+        maybe_unlinkat(cache_dir, path)?;
 
         return Ok(Handle {
             src_file: src_file,
-            cache_file: File::open(cache_path, cache_flags, mode)?,
+            cache_file: File::openat(cache_dir, path, cache_flags, mode)?,
             dirty: true,
         });
     }
 
     pub fn open(
-        src_path: &AsRef<Path>,
-        cache_path: &AsRef<Path>,
+        src_dir: RawFd,
+        cache_dir: RawFd,
+        path: &AsRef<Path>,
         flags: u32,
         cache_valid_if_present: bool,
     ) -> error::Result<Handle> {
@@ -83,19 +103,18 @@ impl Handle {
             make_rdwr(&mut flags);
         }
 
-        let valid = Handle::validate_cache(src_path, cache_path, cache_valid_if_present)?;
+        let valid = Handle::validate_cache(src_dir, cache_dir, &path, cache_valid_if_present)?;
         debug!(
-            "{:?} {} a valid cache file for {:?}",
-            cache_path.as_ref(),
+            "{:?} {} a valid cache file",
+            path.as_ref(),
             if valid { "is" } else { "is not" },
-            src_path.as_ref()
         );
         let mut cache_flags = flags.clone();
 
         if !valid {
             // mkdir the parents
-            if let Some(parent) = cache_path.as_ref().parent() {
-                fs::create_dir_all(parent)?;
+            if let Some(parent) = path.as_ref().parent() {
+                mkdirat_all(cache_dir, &parent, 0o777)?;
             }
             // need to cache this file so need to open it for write
             cache_flags |= rlibc::O_CREAT;
@@ -108,48 +127,51 @@ impl Handle {
         if valid && (flags & rlibc::O_ACCMODE) == rlibc::O_RDONLY {
             src_file = Default::default();
         } else {
-            src_file = File::open(src_path, flags, 0o666)?;
+            src_file = File::openat(src_dir, path, flags, 0o666)?;
         }
 
         let handle = Handle {
             src_file: src_file,
-            cache_file: File::open(cache_path, cache_flags, 0o666)?,
+            cache_file: File::openat(cache_dir, path, cache_flags, 0o666)?,
             dirty: false,
         };
 
         if !valid && (flags & rlibc::O_TRUNC) == 0 {
-            debug!("read ahead {:?}", src_path.as_ref());
+            debug!("read ahead {:?}", path.as_ref());
             handle.copy(true)?;
         }
 
         return Ok(handle);
     }
 
-    pub fn unlink(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> io::Result<()> {
-        maybe_unlink(cache_path)?;
-        return fs::remove_file(src_path);
+    pub fn unlink(src_dir: RawFd, cache_dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
+        maybe_unlinkat(cache_dir, path)?;
+        return rlibc::unlinkat(src_dir, path, 0);
     }
 
-    fn is_pristine(cache_path: &AsRef<Path>) -> error::Result<bool> {
-        if let Some(v) = xattr::get(cache_path, "user.catfs.pristine")? {
+    fn is_pristine(f: &File) -> error::Result<bool> {
+        if let Some(v) = f.get_xattr("user.catfs.pristine")? {
             return Ok(v == PRISTINE);
         }
         return Ok(false);
     }
 
     fn validate_cache(
-        src_path: &AsRef<Path>,
-        cache_path: &AsRef<Path>,
+        src_dir: RawFd,
+        cache_dir: RawFd,
+        path: &AsRef<Path>,
         cache_valid_if_present: bool,
     ) -> error::Result<bool> {
-        match fs::symlink_metadata(src_path) {
+        match rlibc::fstatat(src_dir, path) {
             Ok(_) => {
-                match fs::symlink_metadata(cache_path) {
-                    Ok(_) => {
-                        if cache_valid_if_present || Handle::is_pristine(cache_path)? {
+                match File::openat(cache_dir, path, rlibc::O_RDONLY, 0) {
+                    Ok(mut f) => {
+                        if cache_valid_if_present || Handle::is_pristine(&f)? {
+                            f.close()?;
                             return Ok(true);
                         } else {
-                            fs::remove_file(cache_path)?;
+                            f.close()?;
+                            rlibc::unlinkat(cache_dir, path, 0)?;
                             return Ok(false);
                         }
                     }
@@ -163,7 +185,7 @@ impl Handle {
             Err(e) => {
                 if error::try_enoent(e)? {
                     // the source file doesn't exist, the cache file shouldn't either
-                    maybe_unlink(cache_path)?;
+                    maybe_unlinkat(cache_dir, path)?;
                 }
             }
         }

@@ -26,6 +26,10 @@ pub static O_RDWR: u32 = libc::O_RDWR as u32;
 pub static O_CLOEXEC: u32 = libc::O_CLOEXEC as u32;
 pub static O_CREAT: u32 = libc::O_CREAT as u32;
 pub static O_EXCL: u32 = libc::O_EXCL as u32;
+// XXX for some reason this is not found
+//pub static O_PATH: u32 = libc::O_PATH as u32;
+#[allow(dead_code)]
+pub static O_PATH: u32 = 2097152;
 pub static O_TRUNC: u32 = libc::O_TRUNC as u32;
 
 pub fn to_cstring(path: &AsRef<Path>) -> CString {
@@ -36,6 +40,15 @@ pub fn to_cstring(path: &AsRef<Path>) -> CString {
 pub fn opendir(path: &AsRef<Path>) -> io::Result<*mut libc::DIR> {
     let s = to_cstring(path);
     let dh = unsafe { libc::opendir(s.as_ptr()) };
+    if dh.is_null() {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(dh);
+    }
+}
+
+pub fn fdopendir(fd: RawFd) -> io::Result<*mut libc::DIR> {
+    let dh = unsafe { libc::fdopendir(fd) };
     if dh.is_null() {
         return Err(io::Error::last_os_error());
     } else {
@@ -133,6 +146,16 @@ pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
     }
 }
 
+pub fn mkdirat(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+    let s = to_cstring(path);
+    let res = unsafe { libc::mkdirat(dir, s.as_ptr(), mode) };
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(());
+    }
+}
+
 pub fn pipe() -> io::Result<(libc::c_int, libc::c_int)> {
     let mut p = [0; 2];
     let res = unsafe { libc::pipe2(p.as_mut_ptr(), libc::O_CLOEXEC) };
@@ -181,6 +204,16 @@ pub fn close(fd: libc::c_int) -> io::Result<()> {
     }
 }
 
+pub fn unlinkat(dir: RawFd, path: &AsRef<Path>, flags: u32) -> io::Result<()> {
+    let s = to_cstring(path);
+    let res = unsafe { libc::unlinkat(dir, s.as_ptr(), flags as i32) };
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(());
+    }
+}
+
 pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat> {
     let mut st: libc::stat = unsafe { mem::zeroed() };
 
@@ -189,6 +222,30 @@ pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat> {
         return Err(io::Error::last_os_error());
     } else {
         return Ok(st);
+    }
+}
+
+pub fn fstatat(dir: RawFd, path: &AsRef<Path>) -> io::Result<libc::stat> {
+    let mut st: libc::stat = unsafe { mem::zeroed() };
+    let stp = (&mut st) as *mut libc::stat;
+    let s = to_cstring(path);
+
+    let res = unsafe { libc::fstatat(dir, s.as_ptr(), stp, libc::AT_EMPTY_PATH) };
+
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(st);
+    }
+}
+
+pub fn openat(dir: RawFd, path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
+    let s = to_cstring(path);
+    let fd = unsafe { libc::openat(dir, s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
+    if fd == -1 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(fd);
     }
 }
 
@@ -204,10 +261,32 @@ fn as_mut_void_ptr<T>(s: &mut [T]) -> *mut libc::c_void {
     return s.as_mut_ptr() as *mut libc::c_void;
 }
 
+pub fn open(path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
+    let s = to_cstring(path);
+    let fd = unsafe { libc::open(s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
+    if fd == -1 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(fd);
+    }
+}
+
 impl File {
+    pub fn openat(dir: RawFd, path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<File> {
+        let fd = openat(dir, path, flags, mode)?;
+        debug!(
+            "<-- openat {:?} {:b} {:#o} = {}",
+            path.as_ref(),
+            flags,
+            mode,
+            fd
+        );
+        return Ok(File { fd: fd });
+    }
+
+    #[allow(dead_code)]
     pub fn open(path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<File> {
-        let s = to_cstring(path);
-        let fd = unsafe { libc::open(s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
+        let fd = open(path, flags, mode)?;
         debug!(
             "<-- open {:?} {:b} {:#o} = {}",
             path.as_ref(),
@@ -215,11 +294,7 @@ impl File {
             mode,
             fd
         );
-        if fd == -1 {
-            return Err(io::Error::last_os_error());
-        } else {
-            return Ok(File { fd: fd });
-        }
+        return Ok(File { fd: fd });
     }
 
     pub fn valid(&self) -> bool {
