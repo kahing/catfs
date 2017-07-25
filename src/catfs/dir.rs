@@ -29,6 +29,7 @@ impl Drop for Handle {
 
 impl Handle {
     pub fn open(path: &AsRef<Path>) -> error::Result<Handle> {
+        debug!("opendir {:?}", path.as_ref());
         let dh = rlibc::opendir(path)?;
         return Ok(Handle {
             dh: dh,

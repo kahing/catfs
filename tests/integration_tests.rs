@@ -9,7 +9,7 @@ extern crate fuse;
 extern crate xattr;
 
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -37,9 +37,10 @@ trait Fixture {
 struct CatFSTests<'a> {
     prefix: PathBuf,
     mnt: PathBuf,
-    src: *const PathBuf,
-    cache: *const PathBuf,
+    src: &'static PathBuf,
+    cache: &'static PathBuf,
     session: Option<fuse::BackgroundSession<'a>>,
+    nested: Option<Box<CatFSTests<'a>>>,
 }
 
 fn copy_all(dir1: &AsRef<Path>, dir2: &AsRef<Path>) -> error::Result<()> {
@@ -59,6 +60,14 @@ fn copy_all(dir1: &AsRef<Path>, dir2: &AsRef<Path>) -> error::Result<()> {
     return Ok(());
 }
 
+fn make_static<T: std::fmt::Debug>(t: T) -> &'static T {
+    // not sure why I need to box this
+    let b = Box::new(t);
+    let r = Box::into_raw(b);
+    let p: &'static T = unsafe { std::mem::transmute(r) };
+    return p;
+}
+
 impl<'a> CatFSTests<'a> {
     fn get_orig_dir() -> PathBuf {
         let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
@@ -66,21 +75,15 @@ impl<'a> CatFSTests<'a> {
     }
 
     fn get_from(&self) -> PathBuf {
-        return self.prefix.join("resources");
+        return self.src.clone();
     }
 
     fn get_cache(&self) -> PathBuf {
-        return self.prefix.join("cache");
-    }
-
-    fn extend(&self, s: *const PathBuf) -> &'static PathBuf {
-        return unsafe { std::mem::transmute(s) };
+        return self.cache.clone();
     }
 
     fn mount(&self) -> error::Result<fuse::BackgroundSession<'a>> {
-        let src = self.extend(self.src);
-        let cache = self.extend(self.cache);
-        let fs = CatFS::new(src, cache)?;
+        let fs = CatFS::new(self.src, self.cache)?;
 
         return Ok(unsafe { fuse::spawn_mount(fs, &self.mnt, &[])? });
     }
@@ -107,15 +110,43 @@ impl<'a> Fixture for CatFSTests<'a> {
         let mut t = CatFSTests {
             prefix: prefix,
             mnt: mnt,
-            src: &resources as *const PathBuf,
-            cache: &cache as *const PathBuf,
+            src: make_static(resources),
+            cache: make_static(cache),
             session: Default::default(),
+            nested: Default::default(),
         };
 
-        std::mem::forget(resources);
-        std::mem::forget(cache);
-
         t.session = Some(t.mount()?);
+
+        if let Some(v) = env::var_os("CATFS_SELF_HOST") {
+            if v == OsStr::new("1") {
+                let mnt = t.mnt.clone();
+                let mut mnt2 = mnt.as_os_str().to_os_string();
+                mnt2.push("2");
+                let cache = t.cache.to_path_buf();
+                let mut cache2 = cache.as_os_str().to_os_string();
+                cache2.push("2");
+
+                let mnt2 = PathBuf::from(mnt2);
+                let cache2 = PathBuf::from(cache2);
+
+                fs::create_dir_all(&mnt2)?;
+                fs::create_dir_all(&cache2)?;
+                
+                let mut t2 = CatFSTests {
+                    prefix: t.prefix.clone(),
+                    mnt: mnt2,
+                    src: make_static(mnt),
+                    cache: make_static(cache2),
+                    session: Default::default(),
+                    nested: Some(Box::new(t)),
+                };
+
+                t2.session = Some(t2.mount()?);
+
+                return Ok(t2);
+            }
+        }
 
         return Ok(t);
     }
@@ -123,9 +154,14 @@ impl<'a> Fixture for CatFSTests<'a> {
     fn teardown(self) -> error::Result<()> {
         {
             // move out the session to let us umount first
-            #[allow(unused_variables)]
-            let session = self.session;
+            std::mem::drop(self.session);
         }
+
+        if let Some(t) = self.nested {
+            // unmount the inner session
+            std::mem::drop(t.session);
+        }
+
         fs::remove_dir_all(&self.prefix)?;
         // TODO do I need to free self.src/cache?
         return Ok(());
@@ -133,6 +169,7 @@ impl<'a> Fixture for CatFSTests<'a> {
 }
 
 fn diff(dir1: &AsRef<Path>, dir2: &AsRef<Path>) {
+    debug!("diff {:?} {:?}", dir1.as_ref(), dir2.as_ref());
     let status = Command::new("diff")
         .arg("-ru")
         .arg(dir1.as_ref().as_os_str())
@@ -169,12 +206,12 @@ unit_tests!{
         of.push(f.mnt.join("foo"));
         let status = Command::new("dd")
             .arg("if=/dev/zero").arg(of)
-            .arg("bs=1M").arg("count=100")
+            .arg("bs=1M").arg("count=10")
             .status().expect("failed to execute `dd'");
         assert!(status.success());
         
         let foo = fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
-        assert_eq!(foo.len(), 100 * 1024 * 1024);
+        assert_eq!(foo.len(), 10 * 1024 * 1024);
         diff(&f.get_from(), &f.mnt);
     }
 
