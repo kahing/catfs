@@ -7,6 +7,9 @@ env:
   global:
     - RUST_BACKTRACE=1
     - RUST_LOG=catfs=debug,fuse=debug,integration_tests=debug
+  matrix:
+    - CATFS_SELF_HOST=0
+    - CATFS_SELF_HOST=1
 sudo: required
 before_install:
   - sudo apt-get -qq update
