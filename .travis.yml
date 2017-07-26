@@ -6,7 +6,7 @@ rust:
 env:
   global:
     - RUST_BACKTRACE=1
-    - RUST_LOG=catfs=debug,fuse=debug,integration_tests=debug
+    - RUST_LOG=catfs=debug,integration_tests=debug
   matrix:
     - CATFS_SELF_HOST=0
     - CATFS_SELF_HOST=1
