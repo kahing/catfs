@@ -6,8 +6,6 @@ extern crate fuse;
 extern crate log;
 extern crate chan_signal;
 
-use std::collections::HashMap;
-use std::ffi::OsString;
 use std::path::Path;
 
 use chan_signal::Signal;
@@ -17,15 +15,7 @@ mod flags;
 mod catfs;
 
 use catfs::error;
-
-#[derive(Default)]
-struct FlagStorage {
-    cat_from: OsString,
-    cat_to: OsString,
-    mount_point: OsString,
-    mount_options: HashMap<String, String>,
-    foreground: bool,
-}
+use catfs::flags::FlagStorage;
 
 fn main() {
     if let Err(e) = main_internal() {
@@ -45,8 +35,14 @@ fn main_internal() -> error::Result<()> {
     {
         let mut args = [
             flags::Flag {
+                arg: Arg::with_name("space").long("free").takes_value(true).help(
+                    "Ensure filesystem has at least this much free space. (ex: 9.5%, 10G)",
+                ),
+                value: &mut flags.free_space,
+            },
+            flags::Flag {
                 arg: Arg::with_name("foreground").short("f").help(
-                    "Run catfs in foreground",
+                    "Run catfs in foreground.",
                 ),
                 value: &mut flags.foreground,
             },
@@ -58,19 +54,19 @@ fn main_internal() -> error::Result<()> {
             },
             flags::Flag {
                 arg: Arg::with_name("from").index(1).required(true).help(
-                    "Cache files from this directory",
+                    "Cache files from this directory.",
                 ),
                 value: &mut flags.cat_from,
             },
             flags::Flag {
                 arg: Arg::with_name("to").index(2).required(true).help(
-                    "Cache files to this directory",
+                    "Cache files to this directory.",
                 ),
                 value: &mut flags.cat_to,
             },
             flags::Flag {
                 arg: Arg::with_name("mountpoint").index(3).required(true).help(
-                    "Expose the mount point at this directory",
+                    "Expose the mount point at this directory.",
                 ),
                 value: &mut flags.mount_point,
             },
@@ -78,10 +74,6 @@ fn main_internal() -> error::Result<()> {
 
 
         flags::parse_options(app, &mut args);
-    }
-
-    if flags.foreground {
-        println!("foreground on");
     }
 
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);

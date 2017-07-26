@@ -21,6 +21,7 @@ use self::threadpool::ThreadPool;
 
 pub mod error;
 pub mod file;
+pub mod flags;
 
 mod dir;
 mod inode;
