@@ -22,10 +22,11 @@ use self::threadpool::ThreadPool;
 pub mod error;
 pub mod file;
 pub mod flags;
+pub mod rlibc;
+pub mod tests;
 
 mod dir;
 mod inode;
-mod rlibc;
 mod substr;
 
 use self::inode::Inode;
@@ -102,7 +103,7 @@ impl Drop for CatFS {
 // only safe to use when we know the return value will never be used
 // before the fs instance is dropped, for example if we are spawning
 // new threads, since drop() waits for the threads to finish first
-fn make_self(s: &mut CatFS) -> &'static CatFS {
+pub fn make_self<T>(s: &mut T) -> &'static T {
     return unsafe { ::std::mem::transmute(s) };
 }
 
@@ -127,6 +128,10 @@ impl CatFS {
         debug!("catfs {:?} {:?}", catfs.from, catfs.cache);
 
         return Ok(catfs);
+    }
+
+    pub fn get_cache_dir(&self) -> error::Result<RawFd> {
+        return Ok(rlibc::openat(self.cache_dir, &".", rlibc::O_RDONLY, 0)?);
     }
 
     fn make_root(&mut self) -> error::Result<()> {

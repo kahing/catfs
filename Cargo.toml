@@ -14,6 +14,5 @@ libc = "0.2"
 chan-signal = "0.2"
 xattr = "0.2"
 threadpool = "1.4"
-
-[dev-dependencies]
+itertools = "0.6"
 rand = "0.3"

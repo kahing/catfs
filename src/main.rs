@@ -11,11 +11,13 @@ use std::path::Path;
 use chan_signal::Signal;
 use clap::{App, Arg};
 
-mod flags;
 mod catfs;
+mod flags;
+mod evicter;
 
 use catfs::error;
 use catfs::flags::FlagStorage;
+use catfs::rlibc;
 
 fn main() {
     if let Err(e) = main_internal() {
@@ -80,11 +82,16 @@ fn main_internal() -> error::Result<()> {
     let path_from = Path::new(&flags.cat_from).canonicalize()?;
     let path_to = Path::new(&flags.cat_to).canonicalize()?;
     let fs = catfs::CatFS::new(&path_from, &path_to)?;
-    unsafe {
-        #[allow(unused_variables)]
-        let session = fuse::spawn_mount(fs, &flags.mount_point, &[])?;
-        // unmount after we get signaled because session will go out of scope
+    let cache_dir = fs.get_cache_dir()?;
+    {
+        let _session: fuse::BackgroundSession;
+        unsafe {
+            _session = fuse::spawn_mount(fs, &flags.mount_point, &[])?;
+        }
+        let _ev = evicter::Evicter::new(cache_dir, &flags.free_space);
+        // unmount after we get signaled becausep session will go out of scope
         signal.recv().unwrap();
     }
+    rlibc::close(cache_dir)?;
     return Ok(());
 }

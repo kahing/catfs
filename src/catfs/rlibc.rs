@@ -3,6 +3,7 @@ extern crate libc;
 extern crate xattr;
 
 use std::ffi::{CStr, CString, OsStr, OsString};
+use std::fmt;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::io;
 use std::mem;
@@ -73,7 +74,7 @@ pub fn seekdir(dir: *mut libc::DIR, loc: u64) {
 
 #[derive(Clone)]
 pub struct Dirent {
-    en: libc::dirent,
+    pub en: libc::dirent,
 }
 
 impl Default for Dirent {
@@ -87,6 +88,18 @@ impl Default for Dirent {
                 d_name: [0i8; 256], // FIXME: don't hardcode 256
             },
         };
+    }
+}
+
+impl fmt::Debug for Dirent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "ino: {} type: {:?} name: {:?}",
+            self.ino(),
+            self.kind(),
+            self.name()
+        )
     }
 }
 
@@ -232,6 +245,16 @@ pub fn fstatat(dir: RawFd, path: &AsRef<Path>) -> io::Result<libc::stat> {
 
     let res = unsafe { libc::fstatat(dir, s.as_ptr(), stp, libc::AT_EMPTY_PATH) };
 
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    } else {
+        return Ok(st);
+    }
+}
+
+pub fn fstatvfs(fd: RawFd) -> io::Result<libc::statvfs> {
+    let mut st: libc::statvfs = unsafe { mem::zeroed() };
+    let res = unsafe { libc::fstatvfs(fd, &mut st as *mut libc::statvfs) };
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {

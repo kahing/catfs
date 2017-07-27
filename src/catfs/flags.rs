@@ -4,8 +4,11 @@ use std::ffi::OsString;
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
 
+#[derive(PartialEq)]
+#[derive(Clone)]
+#[derive(Debug)]
 pub enum DiskSpace {
-    Percent(f32),
+    Percent(f64),
     Bytes(u64),
 }
 

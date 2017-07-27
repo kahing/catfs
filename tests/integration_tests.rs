@@ -3,8 +3,6 @@
 extern crate log;
 extern crate libc;
 extern crate env_logger;
-extern crate catfs;
-extern crate rand;
 extern crate fuse;
 extern crate xattr;
 
@@ -18,7 +16,7 @@ use std::process::Command;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::FileExt;
 
-use rand::{thread_rng, Rng};
+extern crate catfs;
 
 use catfs::CatFS;
 use catfs::catfs::error;
@@ -41,23 +39,6 @@ struct CatFSTests<'a> {
     cache: PathBuf,
     session: Option<fuse::BackgroundSession<'a>>,
     nested: Option<Box<CatFSTests<'a>>>,
-}
-
-fn copy_all(dir1: &AsRef<Path>, dir2: &AsRef<Path>) -> error::Result<()> {
-    fs::create_dir(dir2)?;
-
-    for entry in fs::read_dir(dir1)? {
-        let entry = entry?;
-        let to = dir2.as_ref().join(entry.file_name());
-
-        if entry.file_type()?.is_dir() {
-            copy_all(&entry.path(), &to)?;
-        } else {
-            fs::copy(entry.path(), to)?;
-        }
-    }
-
-    return Ok(());
 }
 
 impl<'a> CatFSTests<'a> {
@@ -83,12 +64,9 @@ impl<'a> CatFSTests<'a> {
 
 impl<'a> Fixture for CatFSTests<'a> {
     fn setup() -> error::Result<CatFSTests<'a>> {
-        #[allow(unused_must_use)] env_logger::init();
+        let _ = env_logger::init();
 
-        let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
-        let prefix = PathBuf::from(manifest).join("target/test").join(
-            thread_rng().gen_ascii_chars().take(10).collect::<String>(),
-        );
+        let prefix = catfs::catfs::tests::copy_resources();
         let mnt = prefix.join("mnt");
         let resources = prefix.join("resources");
         let cache = prefix.join("cache");
@@ -96,8 +74,7 @@ impl<'a> Fixture for CatFSTests<'a> {
         fs::create_dir_all(&mnt)?;
         fs::create_dir_all(&cache)?;
 
-        fs::create_dir(CatFSTests::get_orig_dir().join("dir2"));
-        copy_all(&CatFSTests::get_orig_dir(), &resources)?;
+        let _ = fs::create_dir(CatFSTests::get_orig_dir().join("dir2"));
 
         let mut t = CatFSTests {
             prefix: prefix,
@@ -348,4 +325,5 @@ unit_tests!{
             assert_eq!(contents, "hello world");
         }
     }
+
 }
