@@ -13,7 +13,11 @@ env:
 sudo: required
 before_install:
   - sudo apt-get -qq update
-  - sudo apt-get install -y libfuse-dev
+  - sudo apt-get install -y libfuse-dev apport
 matrix:
   allow_failures:
     - rust: nightly
+cache:
+  - target/debug/deps/
+script:
+  - cargo test || if [ -e core* ]; then gdb --batch --ex "thread apply all bt" $(file core* | cut -d\' -f 2) core*; fi
