@@ -2,6 +2,9 @@
 name = "catfs"
 version = "0.1.0"
 authors = ["Ka-Hing Cheung <khc@hxbc.us>"]
+description = "Cache AnyThing filesystem"
+keywords = ["filesystem", "fuse", "cache"]
+categories = ["caching", "filesystem"]
 
 [dependencies]
 backtrace = "0.3"
@@ -16,3 +19,6 @@ xattr = "0.2"
 threadpool = "1.4"
 itertools = "0.6"
 rand = "0.3"
+
+[lib]
+test = false
