@@ -7,6 +7,7 @@ use std::io;
 use std::mem;
 use std::os::unix::io::RawFd;
 use std::path::Path;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -27,6 +28,8 @@ pub struct Evicter {
     low_watermark: DiskSpace,
     scan_freq: Duration,
     statvfs: fn(RawFd) -> io::Result<libc::statvfs>,
+    cv: Arc<Condvar>,
+    shutting_down: Arc<Mutex<bool>>,
     t: Option<JoinHandle<()>>,
 }
 
@@ -64,8 +67,10 @@ impl Evicter {
             })?);
     }
 
-    fn evict_loop(&self) -> error::Result<()> {
+    fn loop_once(&self) -> error::Result<()> {
         let st = (self.statvfs)(self.dir)?;
+
+        debug!("total: {} free: {}", st.f_blocks, st.f_bfree);
 
         let to_evict_blks = self.should_evict(&st);
         if to_evict_blks > 0 {
@@ -82,7 +87,7 @@ impl Evicter {
             let mut evict_pct = to_evict_blks / (cache_blks as f64);
 
             debug!(
-                "evict_loop cache={} to_evict={} pct={}",
+                "cache={} to_evict={} pct={}",
                 cache_blks,
                 to_evict_blks as u64,
                 evict_pct
@@ -129,7 +134,7 @@ impl Evicter {
             }
 
             debug!(
-                "<-- evict_loop terminated after walking {} files",
+                "<-- loop_once terminated after walking {} files",
                 walked_files
             );
         }
@@ -138,7 +143,33 @@ impl Evicter {
     }
 
     pub fn new(dir: RawFd, free: &DiskSpace) -> Evicter {
-        Evicter::new_internal(dir, free, Duration::from_secs(60), rlibc::fstatvfs)
+        Evicter::new_internal(dir, free, Duration::from_secs(6), rlibc::fstatvfs)
+    }
+
+    pub fn run(&mut self) {
+        if self.scan_freq != Default::default() {
+            let evicter = catfs::make_self(self);
+            let builder = thread::Builder::new().name(String::from("evicter"));
+
+            self.t = Some(
+                builder
+                    .spawn(move || loop {
+                        if let Err(e) = evicter.loop_once() {
+                            error!("evicter error: {}", e);
+                        }
+
+                        let guard = evicter.shutting_down.lock().unwrap();
+                        let res = evicter.cv.wait_timeout(guard, evicter.scan_freq).unwrap();
+                        if *res.0 {
+                            debug!("shutting down");
+                            break;
+                        } else {
+                            debug!("not shutting down");
+                        }
+                    })
+                    .unwrap(),
+            );
+        }
     }
 
     fn new_internal(
@@ -153,6 +184,8 @@ impl Evicter {
             low_watermark: Default::default(),
             scan_freq: scan_freq,
             statvfs: statvfs,
+            cv: Arc::new(Condvar::new()),
+            shutting_down: Arc::new(Mutex::new(false)),
             t: Default::default(),
         };
 
@@ -164,17 +197,6 @@ impl Evicter {
                 };
             }
 
-            if ev.scan_freq != Default::default() {
-                let evicter = catfs::make_self(&mut ev);
-
-                ev.t = Some(thread::spawn(move || loop {
-                    if let Err(e) = evicter.evict_loop() {
-                        error!("evicter panic: {}", e);
-                    }
-
-                    thread::sleep(evicter.scan_freq);
-                }));
-            }
         }
 
         return ev;
@@ -183,15 +205,22 @@ impl Evicter {
 
 impl Drop for Evicter {
     fn drop(&mut self) {
+        {
+            let mut b = self.shutting_down.lock().unwrap();
+            *b = true;
+            debug!("requesting to shutdown");
+            self.cv.notify_one();
+        }
+
         let mut t: Option<JoinHandle<()>> = None;
 
         mem::swap(&mut self.t, &mut t);
 
         if let Some(t) = t {
-            if let Err(e) = t.join() {
-                error!("eviction error: {:?}", e);
-            }
+            t.join().expect("evictor panic");
         }
+
+        debug!("joined");
     }
 }
 
@@ -246,7 +275,7 @@ mod tests {
 
         let ev = Evicter::new_internal(fd, &DiskSpace::Bytes(1), Default::default(), fake_statvfs);
         let used = ev.count_cache_blks().unwrap();
-        ev.evict_loop().unwrap();
+        ev.loop_once().unwrap();
         assert_eq!(ev.count_cache_blks().unwrap(), used);
         fs::remove_dir_all(&prefix).unwrap();
     }
@@ -282,7 +311,7 @@ mod tests {
         assert_eq!(ev.should_evict(&st), 8);
         assert_eq!(ev.to_evict(&st), 8);
         let used = ev.count_cache_blks().unwrap();
-        ev.evict_loop().unwrap();
+        ev.loop_once().unwrap();
         // evicted one file
         assert_eq!(used - ev.count_cache_blks().unwrap(), 8);
         fs::remove_dir_all(&prefix).unwrap();
@@ -320,7 +349,7 @@ mod tests {
         assert_eq!(ev.low_watermark, DiskSpace::Percent(100.0));
         assert_eq!(ev.should_evict(&st), 99);
         assert_eq!(ev.to_evict(&st), 99);
-        ev.evict_loop().unwrap();
+        ev.loop_once().unwrap();
         // evicted one file
         assert_eq!(ev.count_cache_blks().unwrap(), 0);
         fs::remove_dir_all(&prefix).unwrap();

@@ -22,3 +22,4 @@ rand = "0.3"
 
 [lib]
 test = false
+harness = false

@@ -88,7 +88,8 @@ fn main_internal() -> error::Result<()> {
         unsafe {
             _session = fuse::spawn_mount(fs, &flags.mount_point, &[])?;
         }
-        let _ev = evicter::Evicter::new(cache_dir, &flags.free_space);
+        let mut ev = evicter::Evicter::new(cache_dir, &flags.free_space);
+        ev.run();
         // unmount after we get signaled becausep session will go out of scope
         signal.recv().unwrap();
     }

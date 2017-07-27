@@ -20,6 +20,8 @@ extern crate catfs;
 
 use catfs::CatFS;
 use catfs::catfs::error;
+use catfs::catfs::flags::DiskSpace;
+use catfs::evicter::Evicter;
 
 #[macro_use]
 mod test_suite;
@@ -38,6 +40,7 @@ struct CatFSTests<'a> {
     src: PathBuf,
     cache: PathBuf,
     session: Option<fuse::BackgroundSession<'a>>,
+    evicter: Option<Evicter>,
     nested: Option<Box<CatFSTests<'a>>>,
 }
 
@@ -55,10 +58,13 @@ impl<'a> CatFSTests<'a> {
         return self.cache.clone();
     }
 
-    fn mount(&self) -> error::Result<fuse::BackgroundSession<'a>> {
+    fn mount(&self) -> error::Result<(fuse::BackgroundSession<'a>, Evicter)> {
         let fs = CatFS::new(&self.src, &self.cache)?;
 
-        return Ok(unsafe { fuse::spawn_mount(fs, &self.mnt, &[])? });
+        let cache_dir = fs.get_cache_dir()?;
+        // essentially no-op, but ensures that it starts and terminates
+        let ev = Evicter::new(cache_dir, &DiskSpace::Bytes(1));
+        return Ok((unsafe { fuse::spawn_mount(fs, &self.mnt, &[])? }, ev));
     }
 }
 
@@ -82,10 +88,17 @@ impl<'a> Fixture for CatFSTests<'a> {
             src: resources,
             cache: cache,
             session: Default::default(),
+            evicter: Default::default(),
             nested: Default::default(),
         };
 
-        t.session = Some(t.mount()?);
+        let (session, ev) = t.mount()?;
+
+        t.session = Some(session);
+        t.evicter = Some(ev);
+        if let Some(ref mut ev) = t.evicter {
+            ev.run();
+        }
 
         if let Some(v) = env::var_os("CATFS_SELF_HOST") {
             if v == OsStr::new("1") {
@@ -108,10 +121,16 @@ impl<'a> Fixture for CatFSTests<'a> {
                     src: mnt,
                     cache: cache2,
                     session: Default::default(),
+                    evicter: Default::default(),
                     nested: Some(Box::new(t)),
                 };
 
-                t2.session = Some(t2.mount()?);
+                let (session, ev) = t2.mount()?;
+                t2.session = Some(session);
+                t2.evicter = Some(ev);
+                if let Some(ref mut ev) = t2.evicter {
+                    ev.run();
+                }
 
                 return Ok(t2);
             }
