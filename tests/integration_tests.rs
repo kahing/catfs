@@ -273,6 +273,24 @@ unit_tests!{
         diff(&f.get_from(), &f.mnt);
     }
 
+    fn read_unlink_while_open(f: &CatFSTests) {
+        let file1 = f.mnt.join("dir1/file1");
+        let mut s = String::new();
+        {
+            let mut f = File::open(&file1).unwrap();
+            f.read_to_string(&mut s).unwrap();
+            assert_eq!(s, "dir1/file1\n");
+
+            fs::remove_file(&file1).unwrap();
+        }
+        if let Err(e) = fs::symlink_metadata(&file1) {
+            assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        } else {
+            panic!("{:?} still exists", file1);
+        }
+        diff(&f.get_from(), &f.mnt);
+    }
+
     fn mkdir(f: &CatFSTests) {
         let foo = f.mnt.join("foo");
         fs::create_dir(&foo).unwrap();

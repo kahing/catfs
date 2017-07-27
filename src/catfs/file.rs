@@ -259,18 +259,20 @@ impl Handle {
         return Ok(bytes_written);
     }
 
-    pub fn flush(&mut self) -> error::Result<()> {
+    pub fn flush(&mut self) -> error::Result<(bool)> {
+        let mut flushed_to_src = false;
         if self.dirty {
             self.copy(false)?;
             self.dirty = false;
+            self.cache_file.flush()?;
+            // if file was opened for read only and cache is valid we
+            // might not have opened src_file
+            if self.src_file.valid() {
+                self.src_file.flush()?;
+                flushed_to_src = true;
+            }
         }
-        self.cache_file.flush()?;
-        // if file was opened for read only and cache is valid we
-        // might not have opened src_file
-        if self.src_file.valid() {
-            self.src_file.flush()?;
-        }
-        return Ok(());
+        return Ok(flushed_to_src);
     }
 
     fn copy_user(rh: &File, wh: &File) -> error::Result<()> {

@@ -133,7 +133,7 @@ impl Inode {
         return Ok(attr);
     }
 
-    pub fn refresh(&mut self) -> io::Result<()> {
+    pub fn refresh(&mut self) -> error::Result<()> {
         self.attr = Inode::lookup_path(self.src_dir, &self.path)?;
         return Ok(());
     }

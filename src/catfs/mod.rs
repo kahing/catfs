@@ -487,6 +487,7 @@ impl Filesystem for CatFS {
     fn flush(&mut self, _req: &Request, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         let s = make_self(self);
         self.tp.lock().unwrap().execute(move || {
+            let flushed_to_src: bool;
             {
                 // first flush locally
                 let file: Arc<Mutex<file::Handle>>;
@@ -496,25 +497,32 @@ impl Filesystem for CatFS {
                 }
 
                 let mut file = file.lock().unwrap();
-                if let Err(e) = file.flush() {
-                    error!("<-- !flush {:?} = {}", fh, e);
-                    reply.error(e.raw_os_error().unwrap());
-                    return;
+                match file.flush() {
+                    Ok(b) => flushed_to_src = b,
+                    Err(e) => {
+                        error!("<-- !flush {:?} = {}", fh, e);
+                        reply.error(error::errno(&e));
+                        return;
+                    }
                 }
             }
 
-            let store = s.store.lock().unwrap();
-            let inode = store.get(ino);
-            let mut inode = inode.lock().unwrap();
+            if flushed_to_src {
+                let store = s.store.lock().unwrap();
+                let inode = store.get(ino);
+                let mut inode = inode.lock().unwrap();
 
-            // refresh attr with the original file so it will be consistent with lookup
-            if let Err(e) = inode.refresh() {
-                error!("<-- !flush {:?} = {}", inode.get_path(), e);
-                reply.error(e.raw_os_error().unwrap());
-                return;
+                // refresh attr with the original file so it will be consistent with lookup
+                if let Err(e) = inode.refresh() {
+                    error!("<-- !flush {:?} = {}", inode.get_path(), e);
+                    reply.error(error::errno(&e));
+                    return;
+                }
+                debug!("<-- flush {:?}", inode.get_path());
+            } else {
+                debug!("<-- flush ino: {} fh: {}", ino, fh);
             }
 
-            debug!("<-- flush {:?}", inode.get_path());
             reply.ok();
         });
     }
