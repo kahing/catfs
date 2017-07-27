@@ -6,7 +6,9 @@ extern crate fuse;
 extern crate log;
 extern crate chan_signal;
 
+use std::error::Error;
 use std::path::Path;
+use std::str::FromStr;
 
 use chan_signal::Signal;
 use clap::{App, Arg};
@@ -16,7 +18,7 @@ mod flags;
 mod evicter;
 
 use catfs::error;
-use catfs::flags::FlagStorage;
+use catfs::flags::{DiskSpace, FlagStorage};
 use catfs::rlibc;
 
 fn main() {
@@ -35,11 +37,32 @@ fn main_internal() -> error::Result<()> {
         .version(crate_version!());
 
     {
+        fn diskspace_validator(s: String) -> Result<(), String> {
+            DiskSpace::from_str(&s).map(|_| ()).map_err(
+                |e| e.to_str().to_owned(),
+            )
+        }
+
+        fn path_validator(s: String) -> Result<(), String> {
+            Path::new(&s)
+                .canonicalize()
+                .map_err(|e| e.description().to_owned())
+                .and_then(|p| if p.is_dir() {
+                    Ok(())
+                } else {
+                    Err("is not a directory".to_owned())
+                })
+        }
+
         let mut args = [
             flags::Flag {
-                arg: Arg::with_name("space").long("free").takes_value(true).help(
-                    "Ensure filesystem has at least this much free space. (ex: 9.5%, 10G)",
-                ),
+                arg: Arg::with_name("space")
+                    .long("free")
+                    .takes_value(true)
+                    .help(
+                        "Ensure filesystem has at least this much free space. (ex: 9.5%, 10G)",
+                    )
+                    .validator(diskspace_validator),
                 value: &mut flags.free_space,
             },
             flags::Flag {
@@ -55,21 +78,27 @@ fn main_internal() -> error::Result<()> {
                 value: &mut flags.mount_options,
             },
             flags::Flag {
-                arg: Arg::with_name("from").index(1).required(true).help(
-                    "Cache files from this directory.",
-                ),
+                arg: Arg::with_name("from")
+                    .index(1)
+                    .required(true)
+                    .help("Cache files from this directory.")
+                    .validator(path_validator),
                 value: &mut flags.cat_from,
             },
             flags::Flag {
-                arg: Arg::with_name("to").index(2).required(true).help(
-                    "Cache files to this directory.",
-                ),
+                arg: Arg::with_name("to")
+                    .index(2)
+                    .required(true)
+                    .help("Cache files to this directory.")
+                    .validator(path_validator),
                 value: &mut flags.cat_to,
             },
             flags::Flag {
-                arg: Arg::with_name("mountpoint").index(3).required(true).help(
-                    "Expose the mount point at this directory.",
-                ),
+                arg: Arg::with_name("mountpoint")
+                    .index(3)
+                    .required(true)
+                    .help("Expose the mount point at this directory.")
+                    .validator(path_validator),
                 value: &mut flags.mount_point,
             },
         ];

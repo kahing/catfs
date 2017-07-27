@@ -21,6 +21,12 @@ impl Default for DiskSpace {
 #[derive(Debug)]
 pub struct DiskSpaceParseError(String);
 
+impl DiskSpaceParseError {
+    pub fn to_str(&self) -> &str {
+        &self.0
+    }
+}
+
 impl From<ParseIntError> for DiskSpaceParseError {
     fn from(e: ParseIntError) -> DiskSpaceParseError {
         return DiskSpaceParseError(e.description().to_string());
@@ -47,7 +53,7 @@ impl FromStr for DiskSpace {
                 'M' => 1 * 1024 * 1024,
                 'K' => 1 * 1024,
                 '0'...'9' => 1,
-                _ => return Err(DiskSpaceParseError("unable to parse ".to_owned() + s)),
+                _ => return Err(DiskSpaceParseError("unrecognize unit in ".to_owned() + s)),
             };
             if unit > 1 {
                 return Ok(DiskSpace::Bytes(s[0..s.len() - 1].parse::<u64>()? * unit));
