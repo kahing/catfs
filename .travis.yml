@@ -17,7 +17,8 @@ before_install:
 matrix:
   allow_failures:
     - rust: nightly
-cache:
-  - target/debug/deps/
+cache: cargo
+before_cache:
+  - rm -Rf target/test/
 script:
   - cargo test || if [ -e core* ]; then gdb --batch --ex "thread apply all bt" $(file core* | cut -d\' -f 2) core*; fi
