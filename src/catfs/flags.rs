@@ -46,7 +46,8 @@ impl FromStr for DiskSpace {
                 'G' => 1 * 1024 * 1024 * 1024,
                 'M' => 1 * 1024 * 1024,
                 'K' => 1 * 1024,
-                _ => 1,
+                '0'...'9' => 1,
+                _ => return Err(DiskSpaceParseError("unable to parse ".to_owned() + s)),
             };
             if unit > 1 {
                 return Ok(DiskSpace::Bytes(s[0..s.len() - 1].parse::<u64>()? * unit));
@@ -65,4 +66,41 @@ pub struct FlagStorage {
     pub mount_options: HashMap<String, String>,
     pub foreground: bool,
     pub free_space: DiskSpace,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse() {
+        assert_eq!(
+            DiskSpace::from_str("25G").unwrap(),
+            DiskSpace::Bytes(25 * 1024 * 1024 * 1024)
+        );
+        assert_eq!(DiskSpace::from_str("25").unwrap(), DiskSpace::Bytes(25));
+        assert_eq!(
+            DiskSpace::from_str("25%").unwrap(),
+            DiskSpace::Percent(25.0)
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn parse_negative() {
+        DiskSpace::from_str("-25").unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn parse_unknown_unit() {
+        DiskSpace::from_str("25W").unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    #[allow(non_snake_case)]
+    fn parse_NaN() {
+        DiskSpace::from_str("CAT").unwrap();
+    }
 }

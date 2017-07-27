@@ -163,8 +163,6 @@ impl Evicter {
                         if *res.0 {
                             debug!("shutting down");
                             break;
-                        } else {
-                            debug!("not shutting down");
                         }
                     })
                     .unwrap(),
