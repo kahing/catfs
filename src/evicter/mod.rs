@@ -3,7 +3,6 @@ extern crate libc;
 extern crate rand;
 extern crate twox_hash;
 
-use std::cmp;
 use std::collections::HashSet;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::io;
@@ -31,7 +30,7 @@ pub struct Evicter {
     low_watermark: DiskSpace,
     scan_freq: Duration,
     hot_percent: usize, // 25 to keep most recently used 25%
-    size_weight: u32,
+    request_weight: u32,
     statvfs: fn(RawFd) -> io::Result<libc::statvfs>,
     cv: Arc<Condvar>,
     shutting_down: Arc<Mutex<bool>>,
@@ -41,22 +40,16 @@ pub struct Evicter {
 struct EvictItem {
     hash: u64,
     atime: SystemTime,
-    size: u32, // in blocks, truncates to u32_max if it's over (20GB)
+    size: usize,
 }
 
 impl EvictItem {
     fn new(dir: RawFd, path: &AsRef<Path>) -> error::Result<EvictItem> {
         let st = rlibc::fstatat(dir, path)?;
-        let size: u32;
-        if st.st_blocks > ::std::u32::MAX as i64 {
-            size = ::std::u32::MAX;
-        } else {
-            size = st.st_blocks as u32;
-        }
 
         Ok(EvictItem {
             hash: EvictItem::hash_of(path),
-            size: size,
+            size: (st.st_blocks * 512) as usize,
             atime: UNIX_EPOCH + Duration::new(st.st_atime as u64, st.st_atime_nsec as u32),
         })
     }
@@ -107,14 +100,13 @@ impl Hasher for IdentU64Hasher {
 
 // in blocks
 fn to_evict(spec: &DiskSpace, st: &libc::statvfs) -> u64 {
-    let desired_blocks = match *spec {
-        DiskSpace::Percent(p) => (st.f_blocks as f64 * p / 100.0) as u64,
-        DiskSpace::Bytes(b) => b / st.f_bsize,
+    let desired = match *spec {
+        DiskSpace::Percent(p) => ((st.f_blocks * st.f_frsize) as f64 * p / 100.0) as u64,
+        DiskSpace::Bytes(b) => b,
     } as i64;
 
-    let x = desired_blocks - st.f_bfree as i64;
-    // a file usually has at least 8 blocks (4KB)
-    return if x > 0 { cmp::max(x as u64, 8) } else { 0 };
+    let x = desired - (st.f_bfree * st.f_frsize) as i64;
+    return if x > 0 { x as u64 } else { 0 };
 }
 
 impl Evicter {
@@ -129,12 +121,17 @@ impl Evicter {
     fn loop_once(&self) -> error::Result<()> {
         let st = (self.statvfs)(self.dir)?;
 
-        debug!("total: {} free: {}", st.f_blocks, st.f_bfree);
+        let to_evict_bytes = self.should_evict(&st);
+        debug!(
+            "total: {} free: {} to_evict: {}",
+            st.f_blocks,
+            st.f_bfree,
+            to_evict_bytes
+        );
 
-        let to_evict_blks = self.should_evict(&st);
-        if to_evict_blks > 0 {
-            let to_evict_blks = self.to_evict(&st);
-            let mut evicted_blks = 0;
+        if to_evict_bytes > 0 {
+            let to_evict_bytes = self.to_evict(&st);
+            let mut evicted_bytes = 0;
 
             let mut items = DirWalker::new(self.dir)?
                 .map(|x| EvictItem::new(self.dir, &x))
@@ -150,17 +147,17 @@ impl Evicter {
             for i in 0..items.len() {
                 total_size += items[i].size as u64;
 
-                if total_size >= to_evict_blks &&
+                if total_size >= to_evict_bytes &&
                     i >= items.len() * (100 - self.hot_percent) / 100
                 {
-                    items.truncate(i);
+                    items.truncate(i + 1);
                     break;
                 }
             }
 
             // now I have items that have not been accessed recently,
             // weight them according to size
-            items.sort_by_key(|x| x.size * self.size_weight + 1);
+            items.sort_by_key(|x| x.size + self.request_weight as usize);
 
             let mut candidates_to_evict = 0u64;
 
@@ -171,20 +168,19 @@ impl Evicter {
                 candidates_to_evict += i.size as u64;
                 item_set.insert(i);
 
-                if candidates_to_evict >= to_evict_blks {
+                if candidates_to_evict >= to_evict_bytes {
                     break;
                 }
             }
 
             DirWalker::new(self.dir)?
                 .map(|p| (Box::new(EvictItem::new_for_lookup(&p)), p))
-                .filter(|i| item_set.contains(&i.0))
-                .foreach(|i| {
-                    evicted_blks += i.0.size;
+                .foreach(|i| if let Some(item) = item_set.get(&i.0) {
+                    evicted_bytes += item.size;
                     if let Err(e) = rlibc::unlinkat(self.dir, &i.1, 0) {
-                        debug!("wanted to evict {:?}={} but got {}", i.1, i.0.size, e);
+                        debug!("wanted to evict {:?}={} but got {}", i.1, item.size, e);
                     } else {
-                        debug!("evicting {:?}={}", i.1, i.0.size);
+                        debug!("evicting {:?}={}", i.1, item.size);
                     }
                 });
         }
@@ -234,9 +230,8 @@ impl Evicter {
             hot_percent: 25,
             // modeling by the google nearline operation cost:
             // $0.01/10000 requests and $0.01/GB = 0.000001/r and
-            // .0000048828/blk = 1/r and 4.88/blk (round the latter to
-            // 5)
-            size_weight: 5,
+            // $.00000000000931322574/byte = 107374/r and 1/byte
+            request_weight: 107374,
             statvfs: statvfs,
             cv: Arc::new(Condvar::new()),
             shutting_down: Arc::new(Mutex::new(false)),
@@ -285,19 +280,9 @@ mod tests {
     use super::*;
     use self::dir_walker::DirWalker;
 
-    fn count_cache_blks(dir: RawFd) -> error::Result<u64> {
-        /*
-        let mut d = DirWalker::new(dir)?;
-        let mut d = d.map(|p: PathBuf| Ok(rlibc::fstatat(dir, &p)?.st_blocks as u64));
-        let d: error::Result<u64> = d.fold_results(0u64, |mut t, s| {
-            t += s as u64;
-            t
-        });
-        let d: u64 = d?;
-        return Ok(d);
-        */
+    fn count_cache_size(dir: RawFd) -> error::Result<u64> {
         fn get_file_size(dir: RawFd, p: PathBuf) -> io::Result<u64> {
-            Ok(rlibc::fstatat(dir, &p)?.st_blocks as u64)
+            Ok(512 * rlibc::fstatat(dir, &p)?.st_blocks as u64)
         }
 
         return Ok(DirWalker::new(dir)?
@@ -315,24 +300,28 @@ mod tests {
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
         // each file takes 4K (8 blocks) minimum
-        assert_eq!(count_cache_blks(fd).unwrap(), 5 * 8);
+        assert_eq!(count_cache_size(fd).unwrap(), 5 * 4096);
         fs::remove_dir_all(&prefix).unwrap();
     }
 
     #[test]
-    fn to_evict_blks() {
+    fn to_evict_bytes() {
         let mut st: libc::statvfs = unsafe { mem::zeroed() };
-        st.f_bsize = 512;
+        st.f_bsize = 4096;
+        st.f_frsize = 4096;
         st.f_blocks = 100;
         st.f_bfree = 16;
 
         assert_eq!(to_evict(&DiskSpace::Bytes(1), &st), 0);
         assert_eq!(to_evict(&DiskSpace::Bytes(512), &st), 0);
-        assert_eq!(to_evict(&DiskSpace::Bytes(17 * 512), &st), 8);
-        assert_eq!(to_evict(&DiskSpace::Bytes(50 * 512), &st), 34);
+        assert_eq!(to_evict(&DiskSpace::Bytes(17 * 4096), &st), 4096);
+        assert_eq!(
+            to_evict(&DiskSpace::Bytes(50 * 4096), &st),
+            (50 - 16) * 4096
+        );
         assert_eq!(to_evict(&DiskSpace::Percent(1.0), &st), 0);
         assert_eq!(to_evict(&DiskSpace::Percent(10.0), &st), 0);
-        assert_eq!(to_evict(&DiskSpace::Percent(30.0), &st), 14);
+        assert_eq!(to_evict(&DiskSpace::Percent(30.0), &st), (30 - 16) * 4096);
     }
 
     #[test]
@@ -343,16 +332,17 @@ mod tests {
 
         fn fake_statvfs(_dir: RawFd) -> io::Result<libc::statvfs> {
             let mut st: libc::statvfs = unsafe { mem::zeroed() };
-            st.f_bsize = 512;
+            st.f_bsize = 4096;
+            st.f_frsize = 4096;
             st.f_blocks = 10;
             st.f_bfree = 1;
             return Ok(st);
         }
 
         let ev = Evicter::new_internal(fd, &DiskSpace::Bytes(1), Default::default(), fake_statvfs);
-        let used = count_cache_blks(fd).unwrap();
+        let used = count_cache_size(fd).unwrap();
         ev.loop_once().unwrap();
-        assert_eq!(count_cache_blks(fd).unwrap(), used);
+        assert_eq!(count_cache_size(fd).unwrap(), used);
         fs::remove_dir_all(&prefix).unwrap();
     }
 
@@ -363,32 +353,32 @@ mod tests {
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
         fn fake_statvfs(dir: RawFd) -> io::Result<libc::statvfs> {
-            let cache_size = count_cache_blks(dir).unwrap();
+            let cache_size = count_cache_size(dir).unwrap();
 
             let mut st: libc::statvfs = unsafe { mem::zeroed() };
-            st.f_bsize = 512;
+            st.f_bsize = 4096;
+            st.f_frsize = 4096;
             st.f_blocks = 100;
-            // want 1 free block at beginning. cache_size is 5 * 8 = 40 so pretend
-            // 59 blocks are used by other things
-            st.f_bfree = st.f_blocks - cache_size - 59;
+            // want 1 free block at beginning. cache_size is 5 * 4K blocks so pretend
+            // 94 blocks are used by other things
+            st.f_bfree = st.f_blocks - cache_size / st.f_frsize - 94;
             return Ok(st);
         }
 
         let ev = Evicter::new_internal(
             fd,
-            &DiskSpace::Bytes(2 * 512),
+            &DiskSpace::Bytes(4096 + 2048),
             Default::default(),
             fake_statvfs,
         );
 
         let st = fake_statvfs(fd).unwrap();
         assert_eq!(st.f_bfree, 1);
-        assert_eq!(ev.should_evict(&st), 8);
-        assert_eq!(ev.to_evict(&st), 8);
-        let used = count_cache_blks(fd).unwrap();
+        assert_eq!(ev.should_evict(&st), 2048);
+        let used = count_cache_size(fd).unwrap();
         ev.loop_once().unwrap();
         // evicted one file
-        assert_eq!(used - count_cache_blks(fd).unwrap(), 8);
+        assert_eq!(used - count_cache_size(fd).unwrap(), 4096);
         fs::remove_dir_all(&prefix).unwrap();
     }
 
@@ -399,14 +389,15 @@ mod tests {
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
         fn fake_statvfs(dir: RawFd) -> io::Result<libc::statvfs> {
-            let cache_size = count_cache_blks(dir).unwrap();
+            let cache_size = count_cache_size(dir).unwrap();
 
             let mut st: libc::statvfs = unsafe { mem::zeroed() };
-            st.f_bsize = 512;
+            st.f_bsize = 4096;
+            st.f_frsize = 4096;
             st.f_blocks = 100;
-            // want 1 free block at beginning. cache_size is 5 * 8 = 40 so pretend
-            // 59 blocks are used by other things
-            st.f_bfree = st.f_blocks - cache_size - 59;
+            // want 1 free block at beginning. cache_size is 5 * 4K blocks so pretend
+            // 94 blocks are used by other things
+            st.f_bfree = st.f_blocks - cache_size / st.f_frsize - 94;
             return Ok(st);
         }
 
@@ -421,11 +412,10 @@ mod tests {
         let st = fake_statvfs(fd).unwrap();
         assert_eq!(st.f_bfree, 1);
         assert_eq!(ev.low_watermark, DiskSpace::Percent(100.0));
-        assert_eq!(ev.should_evict(&st), 99);
-        assert_eq!(ev.to_evict(&st), 99);
+        assert_eq!(ev.should_evict(&st), 99 * 4096);
         ev.loop_once().unwrap();
         // evicted one file
-        assert_eq!(count_cache_blks(fd).unwrap(), 0);
+        assert_eq!(count_cache_size(fd).unwrap(), 0);
         fs::remove_dir_all(&prefix).unwrap();
     }
 }
