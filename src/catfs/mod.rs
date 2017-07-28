@@ -121,7 +121,7 @@ impl CatFS {
             store: Mutex::new(Default::default()),
             dh_store: Mutex::new(Default::default()),
             fh_store: Mutex::new(Default::default()),
-            tp: Mutex::new(ThreadPool::new(1)),
+            tp: Mutex::new(ThreadPool::new(100)),
         };
 
         catfs.make_root()?;

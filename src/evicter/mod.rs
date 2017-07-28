@@ -193,7 +193,7 @@ impl Evicter {
     }
 
     pub fn new(dir: RawFd, free: &DiskSpace) -> Evicter {
-        Evicter::new_internal(dir, free, Duration::from_secs(6), rlibc::fstatvfs)
+        Evicter::new_internal(dir, free, Duration::from_secs(60), rlibc::fstatvfs)
     }
 
     pub fn run(&mut self) {
