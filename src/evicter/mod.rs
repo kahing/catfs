@@ -1,8 +1,11 @@
 extern crate itertools;
 extern crate libc;
 extern crate rand;
+extern crate twox_hash;
 
 use std::cmp;
+use std::collections::HashSet;
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::io;
 use std::mem;
 use std::os::unix::io::RawFd;
@@ -10,7 +13,7 @@ use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use catfs;
 use catfs::flags::DiskSpace;
@@ -20,17 +23,86 @@ use catfs::rlibc;
 pub mod dir_walker;
 use self::dir_walker::DirWalker;
 use self::itertools::Itertools;
-use self::rand::{thread_rng, Rng};
+use self::twox_hash::XxHash;
 
 pub struct Evicter {
     dir: RawFd,
     high_watermark: DiskSpace,
     low_watermark: DiskSpace,
     scan_freq: Duration,
+    hot_percent: usize, // 25 to keep most recently used 25%
+    size_weight: u32,
     statvfs: fn(RawFd) -> io::Result<libc::statvfs>,
     cv: Arc<Condvar>,
     shutting_down: Arc<Mutex<bool>>,
     t: Option<JoinHandle<()>>,
+}
+
+struct EvictItem {
+    hash: u64,
+    atime: SystemTime,
+    size: u32, // in blocks, truncates to u32_max if it's over (20GB)
+}
+
+impl EvictItem {
+    fn new(dir: RawFd, path: &AsRef<Path>) -> error::Result<EvictItem> {
+        let st = rlibc::fstatat(dir, path)?;
+        let size: u32;
+        if st.st_blocks > ::std::u32::MAX as i64 {
+            size = ::std::u32::MAX;
+        } else {
+            size = st.st_blocks as u32;
+        }
+
+        Ok(EvictItem {
+            hash: EvictItem::hash_of(path),
+            size: size,
+            atime: UNIX_EPOCH + Duration::new(st.st_atime as u64, st.st_atime_nsec as u32),
+        })
+    }
+
+    fn new_for_lookup(path: &AsRef<Path>) -> EvictItem {
+        EvictItem {
+            hash: EvictItem::hash_of(path),
+            size: Default::default(),
+            atime: UNIX_EPOCH,
+        }
+    }
+
+    fn hash_of(path: &AsRef<Path>) -> u64 {
+        let mut h = XxHash::with_seed(0);
+        path.as_ref().hash(&mut h);
+        h.finish()
+    }
+}
+
+impl Hash for EvictItem {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        h.write_u64(self.hash);
+    }
+}
+
+impl PartialEq for EvictItem {
+    fn eq(&self, other: &EvictItem) -> bool {
+        return self.hash == other.hash;
+    }
+}
+
+impl Eq for EvictItem {}
+
+#[derive(Default)]
+struct IdentU64Hasher(u64);
+
+impl Hasher for IdentU64Hasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, _b: &[u8]) {
+        panic!("use write_u64 instead");
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = v;
+    }
 }
 
 // in blocks
@@ -54,19 +126,6 @@ impl Evicter {
         return to_evict(&self.low_watermark, st);
     }
 
-    fn get_file_blks(&self, p: &AsRef<Path>) -> error::Result<u64> {
-        return Ok(rlibc::fstatat(self.dir, &p)?.st_blocks as u64);
-    }
-
-    fn count_cache_blks(&self) -> error::Result<u64> {
-        return Ok(DirWalker::new(self.dir)?
-            .map(|p| self.get_file_blks(&p))
-            .fold_results(0u64, |mut t, s| {
-                t += s as u64;
-                t
-            })?);
-    }
-
     fn loop_once(&self) -> error::Result<()> {
         let st = (self.statvfs)(self.dir)?;
 
@@ -74,69 +133,60 @@ impl Evicter {
 
         let to_evict_blks = self.should_evict(&st);
         if to_evict_blks > 0 {
-            let mut cache_blks = self.count_cache_blks()?;
-            if cache_blks == 0 {
-                return Ok(());
-            }
-
-            let mut to_evict_blks = self.to_evict(&st) as f64;
-            let mut r = thread_rng();
-            let mut walker = DirWalker::new(self.dir)?;
-            let mut walked_files = 0;
+            let to_evict_blks = self.to_evict(&st);
             let mut evicted_blks = 0;
-            let mut evict_pct = to_evict_blks / (cache_blks as f64);
 
-            debug!(
-                "cache={} to_evict={} pct={}",
-                cache_blks,
-                to_evict_blks as u64,
-                evict_pct
-            );
+            let mut items = DirWalker::new(self.dir)?
+                .map(|x| EvictItem::new(self.dir, &x))
+                .map_results(|x| Box::new(x))
+                .fold_results(Box::new(Vec::new()), |mut v, x| {
+                    v.push(x);
+                    v
+                })?;
 
-            loop {
-                if let Some(p) = walker.next() {
-                    walked_files += 1;
+            items.sort_by_key(|x| x.atime);
 
-                    // pick files to evict
-                    let size = self.get_file_blks(&p)?;
-                    let dice = r.next_f64() * size as f64 / to_evict_blks;
-                    if dice < evict_pct {
-                        debug!("evicting {:?}={} dice: {} < {}", p, size, dice, evict_pct);
-                        evicted_blks += size;
-                        rlibc::unlinkat(self.dir, &p, 0)?;
-                    }
+            let mut total_size = 0u64;
+            for i in 0..items.len() {
+                total_size += items[i].size as u64;
 
-                    // re-examine how much free space we have every
-                    // 100 files and every 10% to the goal, since
-                    // other evictions maybe going on (ex: if there
-                    // are 2 catfs running)
-                    if walked_files % 100 == 0 || evicted_blks as f64 / to_evict_blks > 0.1 {
-                        let st = (self.statvfs)(self.dir)?;
-                        to_evict_blks = self.to_evict(&st) as f64;
-                        if to_evict_blks <= 0f64 {
-                            break;
-                        }
-                        if cache_blks > evicted_blks {
-                            cache_blks -= evicted_blks;
-                            evict_pct = to_evict_blks / (cache_blks as f64);
-                            evicted_blks = 0;
-                        } else {
-                            // if file size changed it's possible for
-                            // cache_blks < evicted_blks
-                            break;
-                        }
-                    }
-                } else if walked_files == 0 {
+                if total_size >= to_evict_blks &&
+                    i >= items.len() * (100 - self.hot_percent) / 100
+                {
+                    items.truncate(i);
                     break;
-                } else {
-                    walker = DirWalker::new(self.dir)?;
                 }
             }
 
-            debug!(
-                "<-- loop_once terminated after walking {} files",
-                walked_files
-            );
+            // now I have items that have not been accessed recently,
+            // weight them according to size
+            items.sort_by_key(|x| x.size * self.size_weight + 1);
+
+            let mut candidates_to_evict = 0u64;
+
+            type EvictItemSet = HashSet<Box<EvictItem>, BuildHasherDefault<IdentU64Hasher>>;
+            let mut item_set = EvictItemSet::default();
+
+            for i in items.into_iter().rev() {
+                candidates_to_evict += i.size as u64;
+                item_set.insert(i);
+
+                if candidates_to_evict >= to_evict_blks {
+                    break;
+                }
+            }
+
+            DirWalker::new(self.dir)?
+                .map(|p| (Box::new(EvictItem::new_for_lookup(&p)), p))
+                .filter(|i| item_set.contains(&i.0))
+                .foreach(|i| {
+                    evicted_blks += i.0.size;
+                    if let Err(e) = rlibc::unlinkat(self.dir, &i.1, 0) {
+                        debug!("wanted to evict {:?}={} but got {}", i.1, i.0.size, e);
+                    } else {
+                        debug!("evicting {:?}={}", i.1, i.0.size);
+                    }
+                });
         }
 
         return Ok(());
@@ -181,6 +231,12 @@ impl Evicter {
             high_watermark: free.clone(),
             low_watermark: Default::default(),
             scan_freq: scan_freq,
+            hot_percent: 25,
+            // modeling by the google nearline operation cost:
+            // $0.01/10000 requests and $0.01/GB = 0.000001/r and
+            // .0000048828/blk = 1/r and 4.88/blk (round the latter to
+            // 5)
+            size_weight: 5,
             statvfs: statvfs,
             cv: Arc::new(Condvar::new()),
             shutting_down: Arc::new(Mutex::new(false)),
@@ -217,8 +273,6 @@ impl Drop for Evicter {
         if let Some(t) = t {
             t.join().expect("evictor panic");
         }
-
-        debug!("joined");
     }
 }
 
@@ -226,8 +280,33 @@ impl Drop for Evicter {
 mod tests {
     extern crate env_logger;
     use std::fs;
+    use std::path::PathBuf;
     use catfs::rlibc;
     use super::*;
+    use self::dir_walker::DirWalker;
+
+    fn count_cache_blks(dir: RawFd) -> error::Result<u64> {
+        /*
+        let mut d = DirWalker::new(dir)?;
+        let mut d = d.map(|p: PathBuf| Ok(rlibc::fstatat(dir, &p)?.st_blocks as u64));
+        let d: error::Result<u64> = d.fold_results(0u64, |mut t, s| {
+            t += s as u64;
+            t
+        });
+        let d: u64 = d?;
+        return Ok(d);
+        */
+        fn get_file_size(dir: RawFd, p: PathBuf) -> io::Result<u64> {
+            Ok(rlibc::fstatat(dir, &p)?.st_blocks as u64)
+        }
+
+        return Ok(DirWalker::new(dir)?
+            .map(|p| get_file_size(dir, p))
+            .fold_results(0u64, |mut t, s| {
+                t += s as u64;
+                t
+            })?);
+    }
 
     #[test]
     fn count_cache() {
@@ -235,9 +314,8 @@ mod tests {
         let prefix = catfs::tests::copy_resources();
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
-        let ev = Evicter::new(fd, &DiskSpace::Bytes(0));
         // each file takes 4K (8 blocks) minimum
-        assert_eq!(ev.count_cache_blks().unwrap(), 5 * 8);
+        assert_eq!(count_cache_blks(fd).unwrap(), 5 * 8);
         fs::remove_dir_all(&prefix).unwrap();
     }
 
@@ -272,9 +350,9 @@ mod tests {
         }
 
         let ev = Evicter::new_internal(fd, &DiskSpace::Bytes(1), Default::default(), fake_statvfs);
-        let used = ev.count_cache_blks().unwrap();
+        let used = count_cache_blks(fd).unwrap();
         ev.loop_once().unwrap();
-        assert_eq!(ev.count_cache_blks().unwrap(), used);
+        assert_eq!(count_cache_blks(fd).unwrap(), used);
         fs::remove_dir_all(&prefix).unwrap();
     }
 
@@ -285,8 +363,7 @@ mod tests {
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
         fn fake_statvfs(dir: RawFd) -> io::Result<libc::statvfs> {
-            let ev = Evicter::new(dir, &DiskSpace::Bytes(0));
-            let cache_size = ev.count_cache_blks().unwrap();
+            let cache_size = count_cache_blks(dir).unwrap();
 
             let mut st: libc::statvfs = unsafe { mem::zeroed() };
             st.f_bsize = 512;
@@ -308,10 +385,10 @@ mod tests {
         assert_eq!(st.f_bfree, 1);
         assert_eq!(ev.should_evict(&st), 8);
         assert_eq!(ev.to_evict(&st), 8);
-        let used = ev.count_cache_blks().unwrap();
+        let used = count_cache_blks(fd).unwrap();
         ev.loop_once().unwrap();
         // evicted one file
-        assert_eq!(used - ev.count_cache_blks().unwrap(), 8);
+        assert_eq!(used - count_cache_blks(fd).unwrap(), 8);
         fs::remove_dir_all(&prefix).unwrap();
     }
 
@@ -322,8 +399,7 @@ mod tests {
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
         fn fake_statvfs(dir: RawFd) -> io::Result<libc::statvfs> {
-            let ev = Evicter::new(dir, &DiskSpace::Bytes(0));
-            let cache_size = ev.count_cache_blks().unwrap();
+            let cache_size = count_cache_blks(dir).unwrap();
 
             let mut st: libc::statvfs = unsafe { mem::zeroed() };
             st.f_bsize = 512;
@@ -349,7 +425,7 @@ mod tests {
         assert_eq!(ev.to_evict(&st), 99);
         ev.loop_once().unwrap();
         // evicted one file
-        assert_eq!(ev.count_cache_blks().unwrap(), 0);
+        assert_eq!(count_cache_blks(fd).unwrap(), 0);
         fs::remove_dir_all(&prefix).unwrap();
     }
 }

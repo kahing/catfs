@@ -19,6 +19,7 @@ xattr = "0.2"
 threadpool = "1.4"
 itertools = "0.6"
 rand = "0.3"
+twox-hash = "1.1"
 
 [lib]
 test = false
