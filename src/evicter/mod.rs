@@ -155,9 +155,20 @@ impl Evicter {
                 }
             }
 
+            let now = SystemTime::now();
+            let oldest = now.duration_since(items[0].atime).unwrap().as_secs();
+
             // now I have items that have not been accessed recently,
-            // weight them according to size
-            items.sort_by_key(|x| x.size + self.request_weight as usize);
+            // weight them according to size and age
+            items.sort_by_key(|x| {
+                let cost = x.size as u64 + self.request_weight as u64;
+                let age = now.duration_since(x.atime).unwrap().as_secs();
+                if oldest == 0 {
+                    cost
+                } else {
+                    cost * age / oldest
+                }
+            });
 
             let mut candidates_to_evict = 0u64;
 
