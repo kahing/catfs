@@ -41,7 +41,7 @@ them to `<to>` as they are accessed.
 
 # Benchmark
 
-Compare running catfs over sshfs vs sshfs. Topology is
+Compare using catfs to cache sshfs vs sshfs only. Topology is
 laptop - 802.11n - router - 1Gbps wired - desktop. Laptop has SSD
 whereas desktop has spinning rust.
 
