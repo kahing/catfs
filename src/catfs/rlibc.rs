@@ -272,6 +272,21 @@ pub fn openat(dir: RawFd, path: &AsRef<Path>, flags: u32, mode: u32) -> io::Resu
     }
 }
 
+#[allow(dead_code)]
+pub fn utimes(path: &AsRef<Path>, atime: libc::time_t, mtime: libc::time_t) -> io::Result<()> {
+    let s = to_cstring(path);
+    let mut atv: libc::timeval = unsafe { mem::zeroed() };
+    let mut mtv: libc::timeval = unsafe { mem::zeroed() };
+    atv.tv_sec = atime;
+    mtv.tv_sec = mtime;
+    let res = unsafe { libc::utimes(s.as_ptr(), [atv, mtv].as_ptr()) };
+    if res == 0 {
+        return Ok(());
+    } else {
+        return Err(io::Error::last_os_error());
+    }
+}
+
 pub struct File {
     fd: libc::c_int,
 }
@@ -327,6 +342,10 @@ impl File {
     pub fn filesize(&self) -> io::Result<usize> {
         let st = fstat(self.fd)?;
         return Ok(st.st_size as usize);
+    }
+
+    pub fn stat(&self) -> io::Result<libc::stat> {
+        fstat(self.fd)
     }
 
     pub fn truncate(&self, size: usize) -> io::Result<()> {

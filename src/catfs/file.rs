@@ -1,10 +1,17 @@
+extern crate generic_array;
 extern crate libc;
+extern crate sha2;
 extern crate xattr;
 
+use std::ffi::{OsStr, OsString};
 use std::io;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::RawFd;
 use std::path::{Component, Path, PathBuf};
 
+use self::generic_array::GenericArray;
+use self::generic_array::typenum::U64;
+use self::sha2::{Sha512, Digest};
 use self::xattr::FileExt;
 
 use catfs::error;
@@ -17,9 +24,6 @@ pub struct Handle {
     cache_file: File,
     dirty: bool,
 }
-
-pub static PRISTINE: [u8; 1] = ['1' as u8];
-pub static DIRTY: [u8; 1] = ['0' as u8];
 
 // no-op to workaround the fact that we send the entire CatFS at start
 // time, but we never send anything. Could have used Unique but that
@@ -144,16 +148,70 @@ impl Handle {
         return Ok(handle);
     }
 
+    // the equivalent of:
+    // getfattr -e hex --match=.* -d $f 2>/dev/null | grep =;
+    // /usr/bin/stat -t --printf "%s\n%Y\n" $f
+    // note that mtime is printed first and then size
+    pub fn src_str_to_checksum(f: &File) -> error::Result<OsString> {
+        let mut s = OsString::new();
+        match f.list_xattr() {
+            Ok(attrs) => {
+                for x in attrs {
+                    if let Some(v) = f.get_xattr(&x)? {
+                        s.push(x);
+                        s.push(OsStr::new("="));
+                        s.push("0x");
+                        for b in v {
+                            s.push(format!("{:x}", b));
+                        }
+                        s.push("\n");
+                    }
+                }
+            }
+            Err(e) => {
+                if e.raw_os_error().unwrap() != libc::ENOTSUP {
+                    return Err(RError::from(e));
+                }
+            }
+        }
+
+        let st = f.stat()?;
+        s.push(format!("{}\n", st.st_mtime));
+        s.push(format!("{}\n", st.st_size));
+        return Ok(s);
+    }
+
+    fn src_chksum(f: &File) -> error::Result<GenericArray<u8, U64>> {
+        let s = Handle::src_str_to_checksum(f)?;
+        let mut h = Sha512::default();
+        h.input(s.as_bytes());
+        return Ok(h.result());
+    }
+
+    fn set_pristine(&self, pristine: bool) -> error::Result<()> {
+        if pristine {
+            self.cache_file.set_xattr(
+                "user.catfs.src_chksum",
+                Handle::src_chksum(&self.src_file)?
+                    .as_slice(),
+            )?;
+        } else {
+            self.cache_file.remove_xattr("user.catfs.src_chksum")?;
+        }
+        return Ok(());
+    }
+
+    fn is_pristine(src_file: &File, cache_file: &File) -> error::Result<bool> {
+        if let Some(v) = cache_file.get_xattr("user.catfs.src_chksum")? {
+            return Ok(v == Handle::src_chksum(src_file)?.as_slice());
+        }
+
+        return Ok(false);
+    }
+
     pub fn unlink(src_dir: RawFd, cache_dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
         maybe_unlinkat(cache_dir, path)?;
         return rlibc::unlinkat(src_dir, path, 0);
-    }
-
-    fn is_pristine(f: &File) -> error::Result<bool> {
-        if let Some(v) = f.get_xattr("user.catfs.pristine")? {
-            return Ok(v == PRISTINE);
-        }
-        return Ok(false);
     }
 
     fn validate_cache(
@@ -162,20 +220,23 @@ impl Handle {
         path: &AsRef<Path>,
         cache_valid_if_present: bool,
     ) -> error::Result<bool> {
-        match rlibc::fstatat(src_dir, path) {
-            Ok(_) => {
+        match File::openat(src_dir, path, rlibc::O_RDONLY, 0) {
+            Ok(mut src_file) => {
                 match File::openat(cache_dir, path, rlibc::O_RDONLY, 0) {
-                    Ok(mut f) => {
-                        if cache_valid_if_present || Handle::is_pristine(&f)? {
-                            f.close()?;
-                            return Ok(true);
+                    Ok(mut cache_file) => {
+                        let valid: bool;
+                        if cache_valid_if_present || Handle::is_pristine(&src_file, &cache_file)? {
+                            valid = true;
                         } else {
-                            f.close()?;
+                            valid = false;
                             rlibc::unlinkat(cache_dir, path, 0)?;
-                            return Ok(false);
                         }
+                        src_file.close()?;
+                        cache_file.close()?;
+                        return Ok(valid);
                     }
                     Err(e) => {
+                        src_file.close()?;
                         if error::try_enoent(e)? {
                             return Ok(false);
                         }
@@ -228,7 +289,7 @@ impl Handle {
         if !self.dirty {
             // assumes that the metadata will hit the disk before the
             // incoming data will, and not flushing
-            self.cache_file.set_xattr("user.catfs.pristine", &DIRTY)?;
+            self.set_pristine(false)?;
         }
 
         while bytes_written < nwant {
@@ -337,7 +398,7 @@ impl Handle {
             }
         }
 
-        self.cache_file.set_xattr("user.catfs.pristine", &PRISTINE)?;
+        self.set_pristine(true)?;
         return Ok(());
     }
 }

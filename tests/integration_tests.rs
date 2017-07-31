@@ -21,6 +21,8 @@ extern crate catfs;
 use catfs::CatFS;
 use catfs::catfs::error;
 use catfs::catfs::flags::DiskSpace;
+use catfs::catfs::file;
+use catfs::catfs::rlibc;
 use catfs::evicter::Evicter;
 
 #[macro_use]
@@ -316,35 +318,61 @@ unit_tests!{
         }
     }
 
+    fn checksum_str(f: &CatFSTests) {
+        if let Some(v) = env::var_os("CATFS_SELF_HOST") {
+            if v == OsStr::new("1") {
+                // skip this test since we don't support xattr for now
+                return;
+            }
+        }
+        
+        let foo = f.src.join("file1");
+        xattr::set(&foo, "user.catfs.random", b"hello").unwrap();
+        rlibc::utimes(&foo, 0, 100000000).unwrap();
+        let mut fh = rlibc::File::open(&foo, rlibc::O_RDONLY, 0).unwrap();
+        let s = file::Handle::src_str_to_checksum(&fh).unwrap();
+        assert_eq!(s, OsStr::new("user.catfs.random=0x68656c6c6f\n100000000\n6\n"));
+        fh.close().unwrap();
+    }
+
     fn check_dirty(f: &CatFSTests) {
         let foo = f.mnt.join("foo");
         let foo_cache = f.get_cache().join("foo");
         {
             let mut fh = OpenOptions::new().write(true).create(true)
                 .open(&foo).unwrap();
-            fh.write_all(b"hello world").unwrap();
+            fh.write_all(b"hello").unwrap();
 
             // at this point the file is NOT flushed yet, so pristine
             // should not be set
-            assert!(xattr::get(&foo_cache, "user.catfs.pristine").unwrap().is_none());
+            assert!(xattr::get(&foo_cache, "user.catfs.mtime").unwrap().is_none());
+            assert!(xattr::get(&foo_cache, "user.catfs.mtime_nsec").unwrap().is_none());
         }
 
-        let v = xattr::get(&foo_cache, "user.catfs.pristine").unwrap().unwrap();
-        assert_eq!(v, catfs::catfs::file::PRISTINE);
+        xattr::get(&foo_cache, "user.catfs.mtime").unwrap().is_some();
+        xattr::get(&foo_cache, "user.catfs.mtime_nsec").unwrap().is_some();
+        let mut contents = String::new();
+        let mut rh = OpenOptions::new().read(true).open(&foo).unwrap();
+        rh.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "hello");
 
         {
             let mut fh = OpenOptions::new().write(true)
                 .open(&foo).unwrap();
-            fh.write_all(b"hello world").unwrap();
+            fh.write_all(b"world").unwrap();
 
             // at this point the file is NOT flushed yet, so pristine
             // should be dirty
-            let v = xattr::get(&foo_cache, "user.catfs.pristine").unwrap().unwrap();
-            assert_eq!(v, catfs::catfs::file::DIRTY);
+            assert!(xattr::get(&foo_cache, "user.catfs.mtime").unwrap().is_none());
+            assert!(xattr::get(&foo_cache, "user.catfs.mtime_nsec").unwrap().is_none());
         }
 
-        let v = xattr::get(&foo_cache, "user.catfs.pristine").unwrap().unwrap();
-        assert_eq!(v, catfs::catfs::file::PRISTINE);
+        xattr::get(&foo_cache, "user.catfs.mtime").unwrap().is_some();
+        xattr::get(&foo_cache, "user.catfs.mtime_nsec").unwrap().is_some();
+        let mut contents = String::new();
+        let mut rh = OpenOptions::new().read(true).open(&foo).unwrap();
+        rh.read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "world");
     }
 
     fn create_pristine(f: &CatFSTests) {

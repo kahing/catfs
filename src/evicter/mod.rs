@@ -141,6 +141,10 @@ impl Evicter {
                     v
                 })?;
 
+            if items.is_empty() {
+                return Ok(());
+            }
+
             items.sort_by_key(|x| x.atime);
 
             let mut total_size = 0u64;

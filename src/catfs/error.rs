@@ -4,6 +4,7 @@ extern crate libc;
 use std::fmt;
 use std::ops::Deref;
 use std::io;
+use std::string::FromUtf8Error;
 
 use self::backtrace::Backtrace;
 use self::backtrace::BacktraceFrame;
@@ -43,7 +44,7 @@ pub fn errno(e: &RError<io::Error>) -> libc::c_int {
 
 
 impl<E> RError<E> {
-    fn new(e: E) -> RError<E> {
+    pub fn from(e: E) -> RError<E> {
         let mut bt = Backtrace::new();
         let mut i: usize = 0;
         let mut chop: usize = 0;
@@ -91,7 +92,13 @@ impl<E> Deref for RError<E> {
 
 impl From<io::Error> for RError<io::Error> {
     fn from(e: io::Error) -> RError<io::Error> {
-        RError::new(e)
+        RError::from(e)
+    }
+}
+
+impl From<FromUtf8Error> for RError<FromUtf8Error> {
+    fn from(e: FromUtf8Error) -> RError<FromUtf8Error> {
+        RError::from(e)
     }
 }
 
