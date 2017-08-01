@@ -150,7 +150,7 @@ impl Handle {
 
     // the equivalent of:
     // getfattr -e hex --match=.* -d $f 2>/dev/null | grep =;
-    // /usr/bin/stat -t --printf "%s\n%Y\n" $f
+    // /usr/bin/stat -t --printf "%Y\n%s\n" $f
     // note that mtime is printed first and then size
     pub fn src_str_to_checksum(f: &File) -> error::Result<OsString> {
         let mut s = OsString::new();
