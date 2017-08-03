@@ -43,7 +43,7 @@ fn maybe_unlinkat(dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
     return Ok(());
 }
 
-fn mkdirat_all(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+pub fn mkdirat_all(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
     let mut p = PathBuf::new();
 
     for c in path.as_ref().components() {
@@ -390,7 +390,10 @@ impl Handle {
             wh = &self.src_file;
         }
 
-        wh.set_size(rh.filesize()?)?;
+        let size = rh.filesize()?;
+        if size < wh.filesize()? {
+            wh.truncate(size)?;
+        }
 
         if let Err(e) = Handle::copy_splice(rh, wh) {
             if e.raw_os_error().unwrap() == libc::EINVAL {
