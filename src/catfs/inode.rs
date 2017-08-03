@@ -193,6 +193,29 @@ impl Inode {
         return file::Handle::unlink(self.src_dir, self.cache_dir, &self.get_child_name(name));
     }
 
+    pub fn rename(&mut self, new_name: &OsStr, new_path: &AsRef<Path>) -> error::Result<()> {
+        // XXX emulate some sort of atomicity
+
+        // rename src first because if it's a directory, underlining
+        // filesystem may reject if it's non-empty, where as if it's
+        // the cache it may not contain anything or may even not exist
+        rlibc::renameat(self.src_dir, &self.path, new_path)?;
+        // source is renamed and now rename what's in the
+        // cache. If things fail here we are inconsistent. XXX
+        // delete cache path (could be a dir) if we failed to
+        // rename it
+        if rlibc::existat(self.cache_dir, &self.path)? {
+            if let Some(parent) = new_path.as_ref().parent() {
+                file::mkdirat_all(self.cache_dir, &parent, 0o777)?;
+            }
+            rlibc::renameat(self.cache_dir, &self.path, new_path)?;
+        }
+
+        self.name = new_name.to_os_string();
+        self.path = new_path.as_ref().to_path_buf();
+        return Ok(());
+    }
+
     pub fn mkdir(&self, name: &OsStr, mode: u32) -> error::Result<(Inode)> {
         let path = self.get_child_name(name);
 

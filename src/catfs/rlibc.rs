@@ -15,6 +15,7 @@ use std::os::unix::fs::FileExt;
 
 use self::fuse::FileType;
 use self::xattr::FileExt as XattrFileExt;
+use catfs::error;
 use catfs::error::RError;
 
 // libc defines these as i32 which means they can't naturally be OR'ed
@@ -227,6 +228,35 @@ pub fn unlinkat(dir: RawFd, path: &AsRef<Path>, flags: u32) -> io::Result<()> {
     }
 }
 
+pub fn existat(dir: RawFd, path: &AsRef<Path>) -> error::Result<bool> {
+    if let Err(e) = fstatat(dir, path) {
+        if error::try_enoent(e)? {
+            return Ok(false);
+        }
+    }
+
+    return Ok(true);
+}
+
+pub fn renameat(dir: RawFd, path: &AsRef<Path>, newpath: &AsRef<Path>) -> error::Result<()> {
+    let s = to_cstring(path);
+    let new_s = to_cstring(newpath);
+
+    let res = unsafe { libc::renameat(dir, s.as_ptr(), dir, new_s.as_ptr()) };
+    if res < 0 {
+        // rename(2): "On NFS filesystems, you can not assume that
+        // if the operation failed, the file was not renamed"
+        if existat(dir, path)? {
+            // rename actually worked
+            return Ok(());
+        } else {
+            return Err(RError::from(io::Error::last_os_error()));
+        }
+    } else {
+        return Ok(());
+    }
+}
+
 pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat> {
     let mut st: libc::stat = unsafe { mem::zeroed() };
 
@@ -366,6 +396,7 @@ impl File {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_size(&self, size: usize) -> io::Result<()> {
         let old_size = self.filesize()?;
 

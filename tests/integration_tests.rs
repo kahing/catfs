@@ -391,4 +391,34 @@ unit_tests!{
         }
     }
 
+    fn rename_one(f: &CatFSTests) {
+        let file1 = f.mnt.join("dir1/file1");
+        let file_rename = f.mnt.join("dir1/file1_rename");
+        fs::rename(&file1, &file_rename).unwrap();
+        if let Err(e) = fs::symlink_metadata(&file1) {
+            assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        } else {
+            panic!("{:?} still exists", file1);
+        }
+        fs::symlink_metadata(&file_rename).unwrap();
+        diff(&f.get_from(), &f.mnt);
+    }
+
+    fn read_rename(f: &CatFSTests) {
+        let file1 = f.mnt.join("dir1/file1");
+        {
+            let mut s = String::new();
+            File::open(&file1).unwrap().read_to_string(&mut s).unwrap();
+            assert_eq!(s, "dir1/file1\n");
+        }
+        let file_rename = f.mnt.join("dir1/file1_rename");
+        fs::rename(&file1, &file_rename).unwrap();
+        if let Err(e) = fs::symlink_metadata(&file1) {
+            assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        } else {
+            panic!("{:?} still exists", file1);
+        }
+        fs::symlink_metadata(&file_rename).unwrap();
+        diff(&f.get_from(), &f.mnt);
+    }
 }
