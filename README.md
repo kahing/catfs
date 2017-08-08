@@ -78,12 +78,9 @@ Paging in/writeback are done in background threads. All other requests
 are serviced on the same thread, so many operations could block each
 other.
 
-Data is never evicted from cache even when local filesystem is full.
-
 ## TODO
 
 * move all operations to background threads
-* mechanism to control cache size and eviction
 
 # References
 
