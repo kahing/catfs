@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
 use std::num::{ParseFloatError, ParseIntError};
@@ -69,7 +68,7 @@ pub struct FlagStorage {
     pub cat_from: OsString,
     pub cat_to: OsString,
     pub mount_point: OsString,
-    pub mount_options: HashMap<String, String>,
+    pub mount_options: Vec<OsString>,
     pub foreground: bool,
     pub free_space: DiskSpace,
 }

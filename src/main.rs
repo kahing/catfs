@@ -7,6 +7,7 @@ extern crate log;
 extern crate chan_signal;
 
 use std::error::Error;
+use std::ffi::OsStr;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -24,6 +25,7 @@ use catfs::rlibc;
 fn main() {
     if let Err(e) = main_internal() {
         error!("Cannot mount: {}", e);
+        std::process::exit(1);
     }
 }
 
@@ -31,6 +33,7 @@ fn main_internal() -> error::Result<()> {
     env_logger::init().unwrap();
 
     let mut flags: FlagStorage = Default::default();
+    let mut test = false;
 
     let app = App::new("catfs")
         .about("Cache Anything FileSystem")
@@ -78,6 +81,12 @@ fn main_internal() -> error::Result<()> {
                 value: &mut flags.mount_options,
             },
             flags::Flag {
+                arg: Arg::with_name("test").long("test").help(
+                    "Exit after parsing arguments",
+                ),
+                value: &mut test,
+            },
+            flags::Flag {
                 arg: Arg::with_name("from")
                     .index(1)
                     .required(true)
@@ -107,15 +116,24 @@ fn main_internal() -> error::Result<()> {
         flags::parse_options(app, &mut args);
     }
 
+    if test {
+        return Ok(());
+    }
+
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
     let path_from = Path::new(&flags.cat_from).canonicalize()?;
     let path_to = Path::new(&flags.cat_to).canonicalize()?;
     let fs = catfs::CatFS::new(&path_from, &path_to)?;
     let cache_dir = fs.get_cache_dir()?;
+    let mut options: Vec<&OsStr> = Vec::new();
+    for i in 0..flags.mount_options.len() {
+        options.push(&flags.mount_options[i]);
+    }
+
     {
         let _session: fuse::BackgroundSession;
         unsafe {
-            _session = fuse::spawn_mount(fs, &flags.mount_point, &[])?;
+            _session = fuse::spawn_mount(fs, &flags.mount_point, &options)?;
         }
         let mut ev = evicter::Evicter::new(cache_dir, &flags.free_space);
         ev.run();

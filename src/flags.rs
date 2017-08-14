@@ -1,8 +1,6 @@
-//extern crate mopa;
 extern crate clap;
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::ffi::OsString;
 
 use catfs::flags::DiskSpace;
@@ -34,8 +32,12 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
             if let Some(v) = f.value.downcast_mut::<bool>() {
                 *v = true;
             }
-            if let Some(_v) = f.value.downcast_mut::<HashMap<String, String>>() {
-                // parse key=value
+            if let Some(mut v) = f.value.downcast_mut::<Vec<OsString>>() {
+                let options = matches.values_of(name).unwrap();
+                for s in options {
+                    v.push(OsString::from("-o"));
+                    v.push(OsString::from(s));
+                }
             }
             if let Some(v) = f.value.downcast_mut::<DiskSpace>() {
                 let s = matches.value_of(name).unwrap();
