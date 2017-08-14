@@ -2,6 +2,7 @@
 extern crate clap;
 extern crate env_logger;
 extern crate fuse;
+extern crate libc;
 #[macro_use]
 extern crate log;
 extern crate chan_signal;
@@ -10,6 +11,7 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::str::FromStr;
+use std::thread;
 
 use chan_signal::Signal;
 use clap::{App, Arg};
@@ -131,9 +133,14 @@ fn main_internal() -> error::Result<()> {
     }
 
     {
-        let _session: fuse::BackgroundSession;
+        let mut session = fuse::Session::new(fs, Path::new(&flags.mount_point), &options)?;
         unsafe {
-            _session = fuse::spawn_mount(fs, &flags.mount_point, &options)?;
+            thread::spawn(move || {
+                if let Err(e) = session.run() {
+                    error!("session.run() = {}", e);
+                }
+                libc::kill(0, libc::SIGTERM);
+            });
         }
         let mut ev = evicter::Evicter::new(cache_dir, &flags.free_space);
         ev.run();
