@@ -1,3 +1,4 @@
+extern crate chan_signal;
 #[macro_use]
 extern crate clap;
 extern crate env_logger;
@@ -5,16 +6,21 @@ extern crate fuse;
 extern crate libc;
 #[macro_use]
 extern crate log;
-extern crate chan_signal;
+extern crate time;
 
+use std::env;
 use std::error::Error;
 use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
+use std::io;
 use std::path::Path;
 use std::str::FromStr;
 use std::thread;
 
 use chan_signal::Signal;
 use clap::{App, Arg};
+use env_logger::LogBuilder;
+use log::LogRecord;
 
 mod catfs;
 mod flags;
@@ -32,7 +38,24 @@ fn main() {
 }
 
 fn main_internal() -> error::Result<()> {
-    env_logger::init().unwrap();
+    let format = |record: &LogRecord| {
+        let t = time::now();
+        format!(
+            "{} {:5} - {}",
+            time::strftime("%Y-%m-%d %H:%M:%S", &t).unwrap(),
+            record.level(),
+            record.args()
+        )
+    };
+
+    let mut builder = LogBuilder::new();
+    builder.format(format);
+
+    if env::var("RUST_LOG").is_ok() {
+        builder.parse(&env::var("RUST_LOG").unwrap());
+    }
+
+    builder.init().unwrap();
 
     let mut flags: FlagStorage = Default::default();
     let mut test = false;
