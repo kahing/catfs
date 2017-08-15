@@ -2,6 +2,7 @@
 
 import uncertainties
 import numpy
+import os
 import sys
 
 def filter_outliers(numbers, mean, std):
@@ -9,8 +10,8 @@ def filter_outliers(numbers, mean, std):
 
 op_str = {
     'create_files' : 'Create 100 files',
-    'rm_files' : 'Unlink 100 files',
     'create_files_parallel' : 'Create 100 files (parallel)',
+    'rm_files' : 'Unlink 100 files',
     'rm_files_parallel' : 'Unlink 100 files (parallel)',
     'ls_files' : 'ls with 1000 files',
     'write_md5' : 'Write 1GB',
@@ -18,10 +19,14 @@ op_str = {
     'read_md5' : 'Read 1GB',
 }
 
+if os.environ.get("FAST") == "true":
+    op_str['write_md5'] = 'Write 10MB'
+    op_str['read_md5'] = 'Read 10MB'
+
 outputOrder = [
     'create_files',
-    'rm_files',
     'create_files_parallel',
+    'rm_files',
     'rm_files_parallel',
     'ls_files',
     'write_md5',

@@ -56,6 +56,20 @@ should give you an idea of the worst case slowdown.
 Write is twice as slow as expected since we are writing twice the
 amount. However it's not clear why `ls` is so slow.
 
+<a name="runbenchmark"></a>
+To run the benchmark, do:
+
+```ShellSession
+$ sudo docker run -e SSHFS_SERVER=user@host --rm --privileged --net=host -v $PWD/target:/root/catfs/target kahing/catfs-bench
+ # result is written to $PWD/target
+```
+
+The docker container will need to be able to ssh to `user@host`. Typically I arrange that by mounting the ssh socket from the host
+
+```ShellSession
+$ sudo docker run -e SSHFS_OPTS="-o ControlPath=/root/.ssh/sockets/%r@%h_%p -o ControlMaster=auto -o StrictHostKeyChecking=no -o Cipher=arcfour user@host:/tmp" -e SSHFS_SERVER=user@host --rm --privileged --net=host -v $HOME/.ssh/sockets:/root/.ssh/sockets  -v $PWD/target:/root/catfs/target kahing/catfs-bench
+```
+
 # License
 
 Copyright (C) 2017 Ka-Hing Cheung

@@ -2,6 +2,7 @@
 
 : ${TRAVIS:="false"}
 : ${FAST:="false"}
+: ${test:=""}
 
 iter=10
 
@@ -28,23 +29,33 @@ fi
 
 prefix=$mnt/test_dir
 
+MOUNTED=0
+
 $cmd >& mount.log &
 PID=$!
 
 function cleanup {
-    popd >/dev/null
-    rmdir $prefix >& /dev/null || true # riofs doesn't support rmdir
+    if [ $MOUNTED == 1 ]; then
+        popd >/dev/null
+        if [ "$TRAVIS" != "false" ]; then
+            rmdir $prefix
+        else
+            rmdir $prefix >& /dev/null || true # riofs doesn't support rmdir
+        fi
+    fi
 
     if [ "$PID" != "" ]; then
-        kill $PID >& /dev/null || true
+        #kill $PID >& /dev/null || true
         fusermount -u $mnt >& /dev/null || true
     fi
 }
 
 function cleanup_err {
     err=$?
-    popd >&/dev/null || true
-    rmdir $prefix >&/dev/null || true
+    if [ $MOUNTED == 1 ]; then
+        popd >&/dev/null || true
+        rmdir $prefix >&/dev/null || true
+    fi
 
     if [ "$PID" != "" ]; then
         kill $PID >& /dev/null || true
@@ -57,15 +68,33 @@ function cleanup_err {
 trap cleanup EXIT
 trap cleanup_err ERR
 
-if [ "$TRAVIS" == "false" ]; then
-    sleep 5
+if [ "$TRAVIS" == "false" -a "$cmd" != "cat" ]; then
+    for i in $(seq 1 10); do
+        (grep -q $mnt /proc/mounts && break) || true
+        sleep 1
+    done
+    if ! grep -q $mnt /proc/mounts; then
+        echo "$mnt not mounted by $cmd"
+        cat mount.log
+        exit 1
+    fi
+    MOUNTED=1
+else
+    # in travis we mount things externally so we know we are mounted
+    MOUNTED=1
 fi
+
 mkdir -p "$prefix"
 pushd "$prefix" >/dev/null
 
+SUDO=
+if [ $(id -u) != 0 ]; then
+    SUDO=sudo
+fi
+
 function drop_cache {
     if [ "$TRAVIS" == "false" ]; then
-        (echo 3 | sudo tee /proc/sys/vm/drop_caches) > /dev/null
+        (echo 3 | $SUDO tee /proc/sys/vm/drop_caches) > /dev/null
     fi
 }
 
@@ -75,8 +104,18 @@ function run_test {
     test=$1
     drop_cache
     sleep 1
+    # make sure riofs cache got cleared
+    if [ -d /tmp/riofs-cache ]; then
+        cache=$(ls -1 /tmp/riofs-cache)
+        rm -Rf /tmp/riofs-cache 2>/dev/null || true
+        mkdir -p /tmp/riofs-cache/$cache
+    fi
     echo -n "$test "
-    time $test
+    if [ $# -gt 1 ]; then
+        time $test $2
+    else
+        time $test
+    fi
 }
 
 function get_howmany {
@@ -100,8 +139,13 @@ function create_files {
 }
 
 function ls_files {
+    get_howmany $@
     # people usually use ls in the terminal when color is on
-    ls --color=always > /dev/null
+    numfiles=$(ls -1 --color=always | wc -l)
+    if [ "$numfiles" != "$howmany" ]; then
+        echo "$numfiles != $howmany"
+        false
+    fi
 }
 
 function rm_files {
@@ -112,14 +156,41 @@ function rm_files {
     done
 }
 
-function create_files_parallel {
-    if [ "$TRAVIS" != "false" ]; then
-        # in travis we use s3proxy with LocalBlobStore which can race with
-        # parallel create files
-        create_files
-        return
-    fi
+function find_files {
+    numfiles=$(find | wc -l)
 
+    if [ "$numfiles" != 820 ]; then
+        echo "$numfiles != 820"
+        rm_tree
+        exit 1
+    fi
+}
+
+function create_tree_parallel {
+    (for i in $(seq 1 9); do
+        mkdir $i
+        for j in $(seq 1 9); do
+            mkdir $i/$j
+
+            for k in $(seq 1 9); do
+                 touch $i/$j/$k & true
+             done
+         done
+    done
+    wait)
+}
+
+function rm_tree {
+    for i in $(seq 1 9); do
+        if [ "$TRAVIS" != "false" ]; then
+            rm -Rf $i
+        else
+            rm -Rf $i >& /dev/null || true # riofs doesn't support rmdir
+        fi
+    done
+}
+
+function create_files_parallel {
     get_howmany $@
 
     (for i in $(seq 1 $howmany); do
@@ -135,18 +206,6 @@ function rm_files_parallel {
         rm file$i & true
     done
     wait)
-}
-
-function write_large_file {
-    count=1000
-    if [ "$FAST" == "true" ]; then
-        count=100
-    fi
-    dd if=/dev/zero of=largefile bs=1MB count=$count oflag=nocache status=none
-}
-
-function read_large_file {
-    dd if=largefile of=/dev/null bs=1MB iflag=nocache status=none
 }
 
 function read_first_byte {
@@ -172,7 +231,7 @@ function write_md5 {
     random_cmd="openssl enc -aes-256-ctr -pass pass:$seed -nosalt"
     count=1000
     if [ "$FAST" == "true" ]; then
-        count=100
+        count=10
     fi
     MD5=$(dd if=/dev/zero bs=1MB count=$count status=none | $random_cmd | \
         tee >(md5sum) >(dd of=largefile bs=1MB oflag=nocache status=none) >/dev/null | cut -f 1 '-d ')
@@ -199,22 +258,49 @@ fi
 if [ "$t" = "" -o "$t" = "ls" ]; then
     create_files_parallel 1000
     for i in $(seq 1 $iter); do
-        run_test ls_files
+        run_test ls_files 1000
     done
     rm_files 1000
 fi
 
 if [ "$t" = "ls_create" ]; then
     create_files_parallel 1000
+    test=dummy
     sleep 10
 fi
 
 if [ "$t" = "ls_ls" ]; then
-    run_test ls_files
+    run_test ls_files 1000
 fi
 
 if [ "$t" = "ls_rm" ]; then
     rm_files 1000
+    test=dummy
+fi
+
+if [ "$t" = "" -o "$t" = "find" ]; then
+    create_tree_parallel
+    for i in $(seq 1 $iter); do
+        run_test find_files
+    done
+    rm_tree
+fi
+
+if [ "$t" = "find_create" ]; then
+    create_tree_parallel
+    test=dummy
+    sleep 10
+fi
+
+if [ "$t" = "find_find" ]; then
+    for i in $(seq 1 $iter); do
+        run_test find_files
+    done
+fi
+
+if [ "$t" = "cleanup" ]; then
+    rm -Rf *
+    test=dummy
 fi
 
 # for https://github.com/kahing/goofys/issues/64
@@ -258,4 +344,9 @@ if [ "$t" = "disable" -o "$t" = "issue64" ]; then
         rm -f file$i & true
     done
     wait)
+fi
+
+if [ "$test" = "" ]; then
+    echo "No test was run: $t"
+    exit 1
 fi
