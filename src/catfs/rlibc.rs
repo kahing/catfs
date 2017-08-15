@@ -429,6 +429,7 @@ impl File {
     }
 
     pub fn flush(&self) -> io::Result<()> {
+        debug!("flush {}", self.fd);
         // trigger a flush for the underly fd, this could be called
         // multiple times, for ex:
         //
