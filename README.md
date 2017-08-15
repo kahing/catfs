@@ -54,7 +54,7 @@ should give you an idea of the worst case slowdown.
 ![Benchmark result](/bench/bench.png?raw=true "Benchmark")
 
 Write is twice as slow as expected since we are writing twice the
-amount. However it's not clear why `ls` is so slow.
+amount.
 
 <a name="runbenchmark"></a>
 To run the benchmark, do:
