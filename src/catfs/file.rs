@@ -183,6 +183,7 @@ impl Handle {
 
     fn src_chksum(f: &File) -> error::Result<GenericArray<u8, U64>> {
         let s = Handle::src_str_to_checksum(f)?;
+        debug!("checksum is {:?}", s);
         let mut h = Sha512::default();
         h.input(s.as_bytes());
         return Ok(h.result());
@@ -203,8 +204,15 @@ impl Handle {
 
     fn is_pristine(src_file: &File, cache_file: &File) -> error::Result<bool> {
         if let Some(v) = cache_file.get_xattr("user.catfs.src_chksum")? {
-            return Ok(v == Handle::src_chksum(src_file)?.as_slice());
+            let expected = Handle::src_chksum(src_file)?;
+            if v == expected.as_slice() {
+                return Ok(true);
+            } else {
+                debug!("{:?} != {:?}, {} {}", v, expected, v.len(), expected.len());
+                return Ok(false);
+            }
         }
+        debug!("user.catfs.src_chksum missing for cache_file");
 
         return Ok(false);
     }
