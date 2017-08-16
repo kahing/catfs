@@ -161,13 +161,19 @@ fn main_internal() -> error::Result<()> {
             if let Err(e) = session.run() {
                 error!("session.run() = {}", e);
             }
+            info!("{:?} unmounted", session.mountpoint());
             unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
         });
 
         let mut ev = evicter::Evicter::new(cache_dir, &flags.free_space);
         ev.run();
         // unmount after we get signaled becausep session will go out of scope
-        signal.recv().unwrap();
+        let s = signal.recv().unwrap();
+        info!(
+            "Received {:?}, attempting to unmount {:?}",
+            s,
+            flags.mount_point
+        );
         unmount(Path::new(&flags.mount_point))?;
     }
     rlibc::close(cache_dir)?;
