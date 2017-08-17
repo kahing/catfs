@@ -152,14 +152,24 @@ impl Handle {
     pub fn src_str_to_checksum(f: &File) -> error::Result<OsString> {
         let mut s = OsString::new();
         for x in ["s3.etag"].iter() {
-            if let Some(v) = f.get_xattr(&x)? {
-                s.push(x);
-                s.push(OsStr::new("="));
-                s.push("0x");
-                for b in v {
-                    s.push(format!("{:x}", b));
+            match f.get_xattr(&x) {
+                Ok(v) => {
+                    if let Some(v) = v {
+                        s.push(x);
+                        s.push(OsStr::new("="));
+                        s.push("0x");
+                        for b in v {
+                            s.push(format!("{:x}", b));
+                        }
+                        s.push("\n");
+                    }
                 }
-                s.push("\n");
+                Err(e) => {
+                    let errno = e.raw_os_error().unwrap();
+                    if errno != libc::ENOENT && errno != libc::ENOTSUP {
+                        return Err(RError::from(e));
+                    }
+                }
             }
         }
 
