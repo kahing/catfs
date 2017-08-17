@@ -7,6 +7,7 @@ keywords = ["filesystem", "fuse", "cache"]
 categories = ["caching", "filesystem"]
 license = "Apache-2.0"
 repository = "https://github.com/kahing/catfs"
+readme = "README.md"
 
 [dependencies]
 backtrace = "0.3"
@@ -28,3 +29,6 @@ xattr = "0.2"
 [lib]
 test = false
 harness = false
+
+[badges]
+travis-ci = { repository = "kahing/catfs", branch = "master" }
