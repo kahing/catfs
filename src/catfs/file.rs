@@ -148,30 +148,18 @@ impl Handle {
         return Ok(handle);
     }
 
-    // the equivalent of:
-    // getfattr -e hex --match=.* -d $f 2>/dev/null | grep =;
-    // /usr/bin/stat -t --printf "%Y\n%s\n" $f
-    // note that mtime is printed first and then size
+    // see validate_cache.sh on how to replicate this
     pub fn src_str_to_checksum(f: &File) -> error::Result<OsString> {
         let mut s = OsString::new();
-        match f.list_xattr() {
-            Ok(attrs) => {
-                for x in attrs {
-                    if let Some(v) = f.get_xattr(&x)? {
-                        s.push(x);
-                        s.push(OsStr::new("="));
-                        s.push("0x");
-                        for b in v {
-                            s.push(format!("{:x}", b));
-                        }
-                        s.push("\n");
-                    }
+        for x in ["s3.etag"].iter() {
+            if let Some(v) = f.get_xattr(&x)? {
+                s.push(x);
+                s.push(OsStr::new("="));
+                s.push("0x");
+                for b in v {
+                    s.push(format!("{:x}", b));
                 }
-            }
-            Err(e) => {
-                if e.raw_os_error().unwrap() != libc::ENOTSUP {
-                    return Err(RError::from(e));
-                }
+                s.push("\n");
             }
         }
 
