@@ -6,6 +6,7 @@ description = "Cache AnyThing filesystem"
 keywords = ["filesystem", "fuse", "cache"]
 categories = ["caching", "filesystem"]
 license = "Apache-2.0"
+repository = "https://github.com/kahing/catfs"
 
 [dependencies]
 backtrace = "0.3"
