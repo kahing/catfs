@@ -100,9 +100,11 @@ fn main_internal() -> error::Result<()> {
                 value: &mut flags.foreground,
             },
             flags::Flag {
-                arg: Arg::with_name("option").short("o").takes_value(true).help(
-                    "Additional system-specific mount options. Be careful!",
-                ),
+                arg: Arg::with_name("option")
+                    .short("o")
+                    .takes_value(true)
+                    .multiple(true)
+                    .help("Additional system-specific mount options. Be careful!"),
                 value: &mut flags.mount_options,
             },
             flags::Flag {
