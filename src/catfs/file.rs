@@ -224,6 +224,7 @@ impl Handle {
                         if cache_valid_if_present || Handle::is_pristine(&src_file, &cache_file)? {
                             valid = true;
                         } else {
+                            error!("{:?} is not a valid cache file, deleting", path.as_ref());
                             valid = false;
                             rlibc::unlinkat(cache_dir, path, 0)?;
                         }
