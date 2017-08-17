@@ -10,7 +10,7 @@ extern crate time;
 
 use std::env;
 use std::error::Error;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::io;
 use std::path::Path;
@@ -144,6 +144,10 @@ fn main_internal() -> error::Result<()> {
     if test {
         return Ok(());
     }
+
+    flags.mount_options.push(
+        OsString::from("default_permissions"),
+    );
 
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
     let path_from = Path::new(&flags.cat_from).canonicalize()?;
