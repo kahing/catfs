@@ -20,9 +20,7 @@ Catfs is ALPHA software. Don't use this if you value your data.
 * Or build from source which requires [Cargo](http://doc.crates.io/).
 
 ```ShellSession
-:~/catfs$ cargo build
-$ # debug binary now in ./target/debug/catf
-:~/catfs$ cargo install
+:~/catfs$ cargo install catfs
 $ # optimized binary now in $HOME/.cargo/bin/catfs
 ```
 
@@ -37,7 +35,8 @@ $ catfs <from> <to> <mountpoint>
 ```
 
 Catfs will expose files in `<from>` under `<mountpoint>`, and cache
-them to `<to>` as they are accessed.
+them to `<to>` as they are accessed. You can use `--free` to control
+how much free space `<to>`'s filesystem has.
 
 # Benchmark
 
