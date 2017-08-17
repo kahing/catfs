@@ -147,6 +147,7 @@ fn main_internal() -> error::Result<()> {
         return Ok(());
     }
 
+    flags.mount_options.push(OsString::from("-o"));
     flags.mount_options.push(
         OsString::from("default_permissions"),
     );
