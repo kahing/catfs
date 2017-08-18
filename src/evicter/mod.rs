@@ -208,7 +208,7 @@ impl Evicter {
     }
 
     pub fn run(&mut self) {
-        if self.scan_freq != Default::default() {
+        if self.scan_freq != Default::default() && self.high_watermark != Default::default() {
             let evicter = catfs::make_self(self);
             let builder = thread::Builder::new().name(String::from("evicter"));
 
