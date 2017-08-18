@@ -345,12 +345,10 @@ unit_tests!{
 
             // at this point the file is NOT flushed yet, so pristine
             // should not be set
-            assert!(xattr::get(&foo_cache, "user.catfs.mtime").unwrap().is_none());
-            assert!(xattr::get(&foo_cache, "user.catfs.mtime_nsec").unwrap().is_none());
+            assert!(!xattr::get(&foo_cache, "user.catfs.src_chksum").unwrap().is_some());
         }
 
-        xattr::get(&foo_cache, "user.catfs.mtime").unwrap().is_some();
-        xattr::get(&foo_cache, "user.catfs.mtime_nsec").unwrap().is_some();
+        assert!(xattr::get(&foo_cache, "user.catfs.src_chksum").unwrap().is_some());
         let mut contents = String::new();
         let mut rh = OpenOptions::new().read(true).open(&foo).unwrap();
         rh.read_to_string(&mut contents).unwrap();
@@ -363,12 +361,10 @@ unit_tests!{
 
             // at this point the file is NOT flushed yet, so pristine
             // should be dirty
-            assert!(xattr::get(&foo_cache, "user.catfs.mtime").unwrap().is_none());
-            assert!(xattr::get(&foo_cache, "user.catfs.mtime_nsec").unwrap().is_none());
+            assert!(!xattr::get(&foo_cache, "user.catfs.src_chksum").unwrap().is_some());
         }
 
-        xattr::get(&foo_cache, "user.catfs.mtime").unwrap().is_some();
-        xattr::get(&foo_cache, "user.catfs.mtime_nsec").unwrap().is_some();
+        assert!(xattr::get(&foo_cache, "user.catfs.src_chksum").unwrap().is_some());
         let mut contents = String::new();
         let mut rh = OpenOptions::new().read(true).open(&foo).unwrap();
         rh.read_to_string(&mut contents).unwrap();
