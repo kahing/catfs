@@ -331,7 +331,7 @@ unit_tests!{
         rlibc::utimes(&foo, 0, 100000000).unwrap();
         let mut fh = rlibc::File::open(&foo, rlibc::O_RDONLY, 0).unwrap();
         let s = file::Handle::src_str_to_checksum(&fh).unwrap();
-        assert_eq!(s, OsStr::new("user.catfs.random=0x68656c6c6f\n100000000\n6\n"));
+        assert_eq!(s, OsStr::new("100000000\n6\n"));
         fh.close().unwrap();
     }
 
