@@ -36,6 +36,7 @@ pub struct Handle {
     src_file: File,
     cache_file: File,
     dirty: bool,
+    write_through_failed: bool,
     has_page_in_thread: bool,
     page_in_res: CvData<PageInInfo>,
 }
@@ -105,6 +106,7 @@ impl Handle {
             src_file: src_file,
             cache_file: File::openat(cache_dir, path, cache_flags, mode)?,
             dirty: true,
+            write_through_failed: false,
             has_page_in_thread: false,
             page_in_res: Arc::new((Default::default(), Condvar::new())),
         });
@@ -156,6 +158,7 @@ impl Handle {
             src_file: src_file,
             cache_file: File::openat(cache_dir, path, cache_flags, 0o666)?,
             dirty: false,
+            write_through_failed: false,
             has_page_in_thread: false,
             page_in_res: Arc::new((Default::default(), Condvar::new())),
         };
@@ -355,20 +358,38 @@ impl Handle {
         }
 
         while bytes_written < nwant {
+            if !self.write_through_failed {
+                if let Err(e) = self.src_file.write_at(
+                    &buf[bytes_written..],
+                    offset + (bytes_written as u64),
+                )
+                {
+                    if e.raw_os_error().unwrap() == libc::ENOTSUP {
+                        self.write_through_failed = true;
+                    } else {
+                        if bytes_written != 0 {
+                            self.dirty = true;
+                        }
+                        return Err(RError::from(e));
+                    }
+                }
+
+            }
+
             match self.cache_file.write_at(
                 &buf[bytes_written..],
                 offset + (bytes_written as u64),
             ) {
                 Ok(nwritten) => {
-                    if nwritten == 0 {
-                        return Ok(bytes_written);
-                    }
                     bytes_written += nwritten;
                 }
                 Err(e) => {
                     if bytes_written > 0 {
-                        return Ok(bytes_written);
+                        break;
                     } else {
+                        if bytes_written != 0 {
+                            self.dirty = true;
+                        }
                         return Err(RError::from(e));
                     }
                 }
@@ -385,14 +406,18 @@ impl Handle {
     pub fn flush(&mut self) -> error::Result<bool> {
         let mut flushed_to_src = false;
         if self.dirty {
-            if self.has_page_in_thread {
-                self.wait_for_eof()?;
-            }
+            if self.write_through_failed {
+                if self.has_page_in_thread {
+                    self.wait_for_eof()?;
+                }
 
-            self.copy(false)?;
-            self.dirty = false;
+                self.copy(false)?;
+            } else {
+                self.set_pristine(true)?;
+            }
             self.cache_file.flush()?;
             self.src_file.flush()?;
+            self.dirty = false;
             flushed_to_src = true;
         } else {
             if self.has_page_in_thread {
@@ -565,6 +590,7 @@ impl Clone for Handle {
             src_file: File::with_fd(self.src_file.as_raw_fd()),
             cache_file: File::with_fd(self.cache_file.as_raw_fd()),
             dirty: self.dirty,
+            write_through_failed: self.write_through_failed,
             has_page_in_thread: false,
             page_in_res: self.page_in_res.clone(),
         };
