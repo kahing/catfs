@@ -9,7 +9,7 @@ use std::string::FromUtf8Error;
 use self::backtrace::Backtrace;
 use self::backtrace::BacktraceFrame;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RError<E> {
     e: E,
     bt: Option<Backtrace>,
@@ -28,10 +28,7 @@ pub fn try_enoent(e: io::Error) -> Result<bool> {
 }
 
 pub fn propagate<T>(e: io::Error) -> Result<T> {
-    return Err(RError {
-        e: e,
-        bt: Default::default(),
-    });
+    return Err(RError::propagate(e));
 }
 
 pub fn errno(e: &RError<io::Error>) -> libc::c_int {
@@ -44,6 +41,13 @@ pub fn errno(e: &RError<io::Error>) -> libc::c_int {
 
 
 impl<E> RError<E> {
+    pub fn propagate(e: E) -> RError<E> {
+        RError {
+            e: e,
+            bt: Default::default(),
+        }
+    }
+
     pub fn from(e: E) -> RError<E> {
         let mut bt = Backtrace::new();
         let mut i: usize = 0;
@@ -87,6 +91,16 @@ impl<E> Deref for RError<E> {
 
     fn deref(&self) -> &E {
         &self.e
+    }
+}
+
+// XXX not really a clone
+impl Clone for RError<io::Error> {
+    fn clone(&self) -> Self {
+        RError {
+            e: io::Error::from_raw_os_error(self.e.raw_os_error().unwrap()),
+            bt: Default::default(),
+        }
     }
 }
 

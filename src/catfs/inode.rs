@@ -1,7 +1,9 @@
 extern crate fuse;
 extern crate libc;
+extern crate threadpool;
 extern crate time;
 
+use self::threadpool::ThreadPool;
 use self::time::{Duration, Timespec};
 
 use std::ffi::OsStr;
@@ -9,6 +11,7 @@ use std::ffi::OsString;
 use std::io;
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use catfs::dir;
 use catfs::error;
@@ -175,13 +178,14 @@ impl Inode {
         return Ok((inode, wh));
     }
 
-    pub fn open(&mut self, flags: u32) -> error::Result<file::Handle> {
+    pub fn open(&mut self, flags: u32, tp: &Mutex<ThreadPool>) -> error::Result<file::Handle> {
         let f = file::Handle::open(
             self.src_dir,
             self.cache_dir,
             &self.path,
             flags,
             self.cache_valid_if_present,
+            tp,
         )?;
         // Handle::open deletes the cache file if it was invalid, so
         // at this point it must be valid, even after we start writing to it

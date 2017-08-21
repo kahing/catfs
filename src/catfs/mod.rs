@@ -368,7 +368,7 @@ impl Filesystem for CatFS {
             }
 
             let mut inode = inode.write().unwrap();
-            match inode.open(flags) {
+            match inode.open(flags, &s.tp) {
                 Ok(file) => {
                     let mut fh_store = s.fh_store.lock().unwrap();
                     let fh = fh_store.next_id;
@@ -399,7 +399,7 @@ impl Filesystem for CatFS {
         // TODO spawn a thread
         let mut buf: Vec<u8> = Vec::with_capacity(size as usize);
         buf.resize(size as usize, 0u8);
-        let file = file.lock().unwrap();
+        let mut file = file.lock().unwrap();
         match file.read(offset, &mut buf) {
             Ok(nread) => {
                 reply.data(&buf[..nread]);
@@ -471,7 +471,7 @@ impl Filesystem for CatFS {
             match file.write(offset, data) {
                 Ok(nbytes) => nwritten = nbytes,
                 Err(e) => {
-                    debug!(
+                    error!(
                         "<-- !write 0x{:016x} {:?} @ {} = {}",
                         fh,
                         OsStr::from_bytes(&data[..cmp::min(32, data.len())]),

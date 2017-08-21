@@ -365,6 +365,10 @@ impl File {
         return Ok(File { fd: fd });
     }
 
+    pub fn with_fd(fd: libc::c_int) -> File {
+        return File { fd: fd };
+    }
+
     pub fn valid(&self) -> bool {
         return self.fd != -1;
     }
@@ -469,6 +473,12 @@ impl File {
         }
 
         return self.fd;
+    }
+
+    pub fn into_raw(&mut self) -> RawFd {
+        let fd = self.fd;
+        self.fd = -1;
+        fd
     }
 }
 
