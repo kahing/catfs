@@ -127,7 +127,8 @@ impl Handle {
             make_rdwr(&mut flags);
         }
 
-        let valid = Handle::validate_cache(src_dir, cache_dir, &path, cache_valid_if_present)?;
+        let valid =
+            Handle::validate_cache(src_dir, cache_dir, &path, cache_valid_if_present, false)?;
         debug!(
             "{:?} {} a valid cache file",
             path.as_ref(),
@@ -233,6 +234,29 @@ impl Handle {
         return Ok(h.result());
     }
 
+    pub fn make_pristine(
+        src_dir: RawFd,
+        cache_dir: RawFd,
+        path: &AsRef<Path>,
+    ) -> error::Result<()> {
+        match File::openat(cache_dir, path, rlibc::O_WRONLY, 0) {
+            Err(e) => {
+                return Err(RError::from(e));
+            }
+            Ok(mut cache) => {
+                let mut src = File::openat(src_dir, path, rlibc::O_RDONLY, 0)?;
+                cache.set_xattr(
+                    "user.catfs.src_chksum",
+                    Handle::src_chksum(&src)?.as_slice(),
+                )?;
+                src.close()?;
+                cache.close()?;
+            }
+        }
+
+        return Ok(());
+    }
+
     fn set_pristine(&self, pristine: bool) -> error::Result<()> {
         if pristine {
             self.cache_file.set_xattr(
@@ -270,11 +294,12 @@ impl Handle {
         return rlibc::unlinkat(src_dir, path, 0);
     }
 
-    fn validate_cache(
+    pub fn validate_cache(
         src_dir: RawFd,
         cache_dir: RawFd,
         path: &AsRef<Path>,
         cache_valid_if_present: bool,
+        check_only: bool,
     ) -> error::Result<bool> {
         match File::openat(src_dir, path, rlibc::O_RDONLY, 0) {
             Ok(mut src_file) => {
@@ -286,7 +311,9 @@ impl Handle {
                         } else {
                             error!("{:?} is not a valid cache file, deleting", path.as_ref());
                             valid = false;
-                            rlibc::unlinkat(cache_dir, path, 0)?;
+                            if !check_only {
+                                rlibc::unlinkat(cache_dir, path, 0)?;
+                            }
                         }
                         src_file.close()?;
                         cache_file.close()?;
@@ -303,7 +330,9 @@ impl Handle {
             Err(e) => {
                 if error::try_enoent(e)? {
                     // the source file doesn't exist, the cache file shouldn't either
-                    maybe_unlinkat(cache_dir, path)?;
+                    if !check_only {
+                        maybe_unlinkat(cache_dir, path)?;
+                    }
                 }
             }
         }
@@ -341,6 +370,27 @@ impl Handle {
         }
 
         return Ok(bytes_read);
+    }
+
+    pub fn truncate(&mut self, size: usize) -> error::Result<()> {
+        // pristiness comes from size as well so this automatically
+        // invalidates the cache file if it's used again
+        self.src_file.set_size(size)?;
+
+        // wait for the background thread to finish so we won't have
+        // more bytes being concurrently written to cache_file
+        if self.has_page_in_thread {
+            self.wait_for_eof()?;
+        }
+
+        self.cache_file.set_size(size)?;
+        // caller is responsible for setting this to pristine if necessary
+        return Ok(());
+    }
+
+    pub fn chmod(&self, mode: u32) -> io::Result<()> {
+        self.src_file.chmod(mode)?;
+        return Ok(());
     }
 
     pub fn write(&mut self, offset: u64, buf: &[u8]) -> error::Result<usize> {

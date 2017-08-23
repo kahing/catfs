@@ -1,5 +1,6 @@
 extern crate fuse;
 extern crate libc;
+extern crate time;
 extern crate xattr;
 
 use std::ffi::{CStr, CString, OsStr, OsString};
@@ -14,7 +15,9 @@ use std::os::unix::io::RawFd;
 use std::os::unix::fs::FileExt;
 
 use self::fuse::FileType;
+use self::time::Timespec;
 use self::xattr::FileExt as XattrFileExt;
+
 use catfs::error;
 use catfs::error::RError;
 
@@ -317,6 +320,43 @@ pub fn utimes(path: &AsRef<Path>, atime: libc::time_t, mtime: libc::time_t) -> i
     }
 }
 
+pub fn utimensat(
+    dir: RawFd,
+    path: &AsRef<Path>,
+    atime: &Timespec,
+    mtime: &Timespec,
+    flags: u32,
+) -> io::Result<()> {
+    let s = to_cstring(path);
+    let mut times = [
+        libc::timespec {
+            tv_sec: atime.sec,
+            tv_nsec: atime.nsec as i64,
+        },
+        libc::timespec {
+            tv_sec: mtime.sec,
+            tv_nsec: mtime.nsec as i64,
+        },
+    ];
+
+    let res = unsafe { libc::utimensat(dir, s.as_ptr(), times.as_mut_ptr(), flags as i32) };
+    if res == 0 {
+        return Ok(());
+    } else {
+        return Err(io::Error::last_os_error());
+    }
+}
+
+pub fn fchmodat(dir: RawFd, path: &AsRef<Path>, mode: u32, flags: u32) -> io::Result<()> {
+    let s = to_cstring(path);
+    let res = unsafe { libc::fchmodat(dir, s.as_ptr(), mode, flags as i32) };
+    if res == 0 {
+        return Ok(());
+    } else {
+        return Err(io::Error::last_os_error());
+    }
+}
+
 pub struct File {
     fd: libc::c_int,
 }
@@ -411,6 +451,15 @@ impl File {
         }
 
         return Ok(());
+    }
+
+    pub fn chmod(&self, mode: u32) -> io::Result<()> {
+        let res = unsafe { libc::fchmod(self.fd, mode) };
+        if res == 0 {
+            return Ok(());
+        } else {
+            return Err(io::Error::from_raw_os_error(res));
+        }
     }
 
     pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {

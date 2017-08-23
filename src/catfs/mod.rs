@@ -6,7 +6,7 @@ extern crate time;
 use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty,
                  ReplyDirectory, ReplyData, ReplyWrite, ReplyCreate};
 
-use self::time::Duration;
+use self::time::{Duration, Timespec};
 
 use std::cmp;
 use std::collections::HashMap;
@@ -273,6 +273,134 @@ impl Filesystem for CatFS {
             inode.get_path(),
             inode.get_attr().size
         );
+    }
+
+    fn setattr(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        size: Option<u64>,
+        atime: Option<Timespec>,
+        mtime: Option<Timespec>,
+        fh: Option<u64>,
+        crtime: Option<Timespec>,
+        chgtime: Option<Timespec>,
+        bkuptime: Option<Timespec>,
+        flags: Option<u32>,
+        reply: ReplyAttr,
+    ) {
+        if uid.is_some() || gid.is_some() {
+            // need to think about how to support this as metadata is
+            // only coming from src and catfs may not be running as root
+            reply.error(libc::ENOTSUP);
+            return;
+        }
+
+        if crtime.is_some() || chgtime.is_some() || bkuptime.is_some() {
+            // don't know how to change these
+            reply.error(libc::ENOTSUP);
+            return;
+        }
+
+        let store = self.store.lock().unwrap();
+        let inode = store.get(ino);
+        let mut inode = inode.write().unwrap();
+
+        let was_valid = file::Handle::validate_cache(
+            self.src_dir,
+            self.cache_dir,
+            &inode.get_path(),
+            false,
+            true,
+        );
+
+        if let Err(e) = was_valid {
+            error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+            reply.error(e.raw_os_error().unwrap());
+            return;
+        }
+
+        let file: Option<Arc<Mutex<file::Handle>>>;
+        if let Some(fh) = fh {
+            let fh_store = self.fh_store.lock().unwrap();
+            file = Some(fh_store.handles.get(&fh).unwrap().clone());
+        } else {
+            file = None;
+        }
+
+
+        if let Some(mode) = mode {
+            if let Some(ref file) = file {
+                let file = file.lock().unwrap();
+                if let Err(e) = file.chmod(mode) {
+                    error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                    reply.error(e.raw_os_error().unwrap());
+                    return;
+                }
+            } else {
+                if let Err(e) = inode.chmod(mode, flags.unwrap_or(0)) {
+                    error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                    reply.error(e.raw_os_error().unwrap());
+                    return;
+                }
+            }
+        }
+
+        if let Some(size) = size {
+            if let Some(ref file) = file {
+                let mut file = file.lock().unwrap();
+
+                if let Err(e) = file.truncate(size as usize) {
+                    error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                    reply.error(e.raw_os_error().unwrap());
+                    return;
+                }
+            } else {
+                if let Err(e) = inode.truncate(size as usize) {
+                    error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                    reply.error(e.raw_os_error().unwrap());
+                    return;
+                }
+            }
+        }
+
+        if mtime.is_some() || atime.is_some() {
+            let old_attr = inode.get_attr();
+
+            if let Err(e) = inode.utimes(
+                &atime.unwrap_or(old_attr.atime),
+                &mtime.unwrap_or(old_attr.mtime),
+                flags.unwrap_or(0),
+            )
+            {
+                error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                reply.error(e.raw_os_error().unwrap());
+                return;
+            }
+        }
+
+        if was_valid.unwrap() {
+            if let Err(e) = file::Handle::make_pristine(
+                self.src_dir,
+                self.cache_dir,
+                &inode.get_path(),
+            )
+            {
+                error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                reply.error(e.raw_os_error().unwrap());
+                return;
+            }
+        }
+
+        if let Err(e) = inode.refresh() {
+            error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+            reply.error(e.raw_os_error().unwrap());
+        } else {
+            reply.attr(&self.ttl_now(), inode.get_attr());
+        }
     }
 
     fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {

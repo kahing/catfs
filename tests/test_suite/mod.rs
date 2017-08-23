@@ -5,7 +5,8 @@ macro_rules! unit_tests {
             #[test]
             fn $name() {
                 match <$ftype as Fixture>::setup() {
-                    Ok($fixt) => {
+                    Ok(mut $fixt) => {
+                        $fixt.init().unwrap();
                         $body
                         if let Err(e) = $fixt.teardown() {
                             panic!("teardown failed: {}", e);

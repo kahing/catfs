@@ -33,6 +33,7 @@ trait Fixture {
     fn setup() -> error::Result<Self>
     where
         Self: std::marker::Sized;
+    fn init(&mut self) -> error::Result<()>;
     fn teardown(self) -> error::Result<()>;
 }
 
@@ -68,6 +69,15 @@ impl<'a> CatFSTests<'a> {
         let ev = Evicter::new(cache_dir, &DiskSpace::Bytes(1));
         return Ok((unsafe { fuse::spawn_mount(fs, &self.mnt, &[])? }, ev));
     }
+
+    fn assert_cache_valid(&self, path: &AsRef<Path>) {
+        let src_dir = rlibc::open(&self.src, rlibc::O_RDONLY, 0).unwrap();
+        let cache_dir = rlibc::open(&self.cache, rlibc::O_RDONLY, 0).unwrap();
+
+        assert!(file::Handle::validate_cache(src_dir, cache_dir, path, false, true).unwrap());
+        rlibc::close(src_dir).unwrap();
+        rlibc::close(cache_dir).unwrap();
+    }
 }
 
 impl<'a> Fixture for CatFSTests<'a> {
@@ -84,7 +94,7 @@ impl<'a> Fixture for CatFSTests<'a> {
 
         let _ = fs::create_dir(CatFSTests::get_orig_dir().join("dir2"));
 
-        let mut t = CatFSTests {
+        let t = CatFSTests {
             prefix: prefix,
             mnt: mnt,
             src: resources,
@@ -93,14 +103,6 @@ impl<'a> Fixture for CatFSTests<'a> {
             evicter: Default::default(),
             nested: Default::default(),
         };
-
-        let (session, ev) = t.mount()?;
-
-        t.session = Some(session);
-        t.evicter = Some(ev);
-        if let Some(ref mut ev) = t.evicter {
-            ev.run();
-        }
 
         if let Some(v) = env::var_os("CATFS_SELF_HOST") {
             if v == OsStr::new("1") {
@@ -117,7 +119,7 @@ impl<'a> Fixture for CatFSTests<'a> {
                 fs::create_dir_all(&mnt2)?;
                 fs::create_dir_all(&cache2)?;
                 
-                let mut t2 = CatFSTests {
+                let t2 = CatFSTests {
                     prefix: t.prefix.clone(),
                     mnt: mnt2,
                     src: mnt,
@@ -127,18 +129,25 @@ impl<'a> Fixture for CatFSTests<'a> {
                     nested: Some(Box::new(t)),
                 };
 
-                let (session, ev) = t2.mount()?;
-                t2.session = Some(session);
-                t2.evicter = Some(ev);
-                if let Some(ref mut ev) = t2.evicter {
-                    ev.run();
-                }
-
                 return Ok(t2);
             }
         }
 
         return Ok(t);
+    }
+
+    fn init(&mut self) -> error::Result<()> {
+        if let Some(ref mut t) = self.nested {
+            t.init()?;
+        }
+
+        let (session, ev) = self.mount()?;
+        self.session = Some(session);
+        self.evicter = Some(ev);
+        if let Some(ref mut ev) = self.evicter {
+            ev.run();
+        }
+        return Ok(());
     }
 
     fn teardown(self) -> error::Result<()> {
@@ -348,7 +357,7 @@ unit_tests!{
             assert!(!xattr::get(&foo_cache, "user.catfs.src_chksum").unwrap().is_some());
         }
 
-        assert!(xattr::get(&foo_cache, "user.catfs.src_chksum").unwrap().is_some());
+        f.assert_cache_valid(&Path::new("foo"));
         let mut contents = String::new();
         let mut rh = OpenOptions::new().read(true).open(&foo).unwrap();
         rh.read_to_string(&mut contents).unwrap();
@@ -364,7 +373,7 @@ unit_tests!{
             assert!(!xattr::get(&foo_cache, "user.catfs.src_chksum").unwrap().is_some());
         }
 
-        assert!(xattr::get(&foo_cache, "user.catfs.src_chksum").unwrap().is_some());
+        f.assert_cache_valid(&Path::new("foo"));
         let mut contents = String::new();
         let mut rh = OpenOptions::new().read(true).open(&foo).unwrap();
         rh.read_to_string(&mut contents).unwrap();
@@ -416,5 +425,32 @@ unit_tests!{
         }
         fs::symlink_metadata(&file_rename).unwrap();
         diff(&f.get_from(), &f.mnt);
+    }
+
+    fn chmod(f: &CatFSTests) {
+        let file1 = f.mnt.join("file1");
+        let mut perm = fs::symlink_metadata(&file1).unwrap().permissions();
+        assert!(!perm.readonly());
+        perm.set_readonly(true);
+        fs::set_permissions(&file1, perm).unwrap();
+        perm = fs::symlink_metadata(&file1).unwrap().permissions();
+        assert!(perm.readonly());
+    }
+
+    fn read_chmod(f: &CatFSTests) {
+        let file1 = f.mnt.join("file1");
+        {
+            let mut s = String::new();
+            File::open(&file1).unwrap().read_to_string(&mut s).unwrap();
+            assert_eq!(s, "file1\n");
+        }
+
+        let mut perm = fs::symlink_metadata(&file1).unwrap().permissions();
+        assert!(!perm.readonly());
+        perm.set_readonly(true);
+        fs::set_permissions(&file1, perm).unwrap();
+        perm = fs::symlink_metadata(&file1).unwrap().permissions();
+        assert!(perm.readonly());
+        f.assert_cache_valid(&Path::new("file1"));
     }
 }

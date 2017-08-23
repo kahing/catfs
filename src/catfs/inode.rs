@@ -17,6 +17,7 @@ use catfs::dir;
 use catfs::error;
 use catfs::file;
 use catfs::rlibc;
+use catfs::rlibc::File;
 
 #[derive(Clone)]
 pub struct Inode {
@@ -217,6 +218,33 @@ impl Inode {
 
         self.name = new_name.to_os_string();
         self.path = new_path.as_ref().to_path_buf();
+        return Ok(());
+    }
+
+    pub fn truncate(&mut self, size: usize) -> error::Result<()> {
+        let mut f = File::openat(self.src_dir, &self.path, rlibc::O_WRONLY, 0)?;
+        f.set_size(size)?;
+        f.close()?;
+
+        match File::openat(self.cache_dir, &self.path, rlibc::O_WRONLY, 0) {
+            Ok(mut f) => {
+                f.set_size(size)?;
+                f.close()?;
+            }
+            Err(e) => {
+                error::try_enoent(e)?;
+            }
+        }
+
+        return Ok(());
+    }
+
+    pub fn utimes(&self, atime: &Timespec, mtime: &Timespec, flags: u32) -> io::Result<()> {
+        rlibc::utimensat(self.src_dir, &self.path, atime, mtime, flags)
+    }
+
+    pub fn chmod(&self, mode: u32, flags: u32) -> io::Result<()> {
+        rlibc::fchmodat(self.src_dir, &self.path, mode, flags)?;
         return Ok(());
     }
 
