@@ -118,6 +118,7 @@ impl Handle {
         path: &AsRef<Path>,
         flags: u32,
         cache_valid_if_present: bool,
+        disable_splice: bool,
         tp: &Mutex<ThreadPool>,
     ) -> error::Result<Handle> {
         // even if file is open for write only, I still need to be
@@ -170,13 +171,15 @@ impl Handle {
             let mut h = handle.clone();
             let path = path.as_ref().to_path_buf();
             tp.lock().unwrap().execute(move || {
-                if let Err(e) = h.copy(true) {
+                if let Err(e) = h.copy(true, disable_splice) {
                     let mut is_cancel = false;
 
-                    let page_in_res = h.page_in_res.0.lock().unwrap();
-                    if let Some(ref e2) = page_in_res.err {
-                        if e2.raw_os_error().unwrap() == libc::ECANCELED {
-                            is_cancel = true;
+                    {
+                        let page_in_res = h.page_in_res.0.lock().unwrap();
+                        if let Some(ref e2) = page_in_res.err {
+                            if e2.raw_os_error().unwrap() == libc::ECANCELED {
+                                is_cancel = true;
+                            }
                         }
                     }
 
@@ -461,12 +464,29 @@ impl Handle {
                     self.wait_for_eof()?;
                 }
 
-                self.copy(false)?;
+                self.copy(false, false)?;
             } else {
                 self.set_pristine(true)?;
             }
             self.cache_file.flush()?;
-            self.src_file.flush()?;
+            if let Err(e) = self.src_file.flush() {
+                error!("!flush(src) = {}", e);
+                // flush failed, now the fd is invalid, get rid of it
+                self.src_file.into_raw();
+
+                // we couldn't flush the src_file, because of some
+                // linux vfs oddity the file would appear to be
+                // "normal" until we try to read it (the inode is
+                // cached), so we need to invalidate our cache (which
+                // would validate and thus we would never read from
+                // src).
+
+                // we only have the fd and there's no funlink, so we
+                // will just unset the xattr
+                self.set_pristine(false)?;
+
+                return Err(RError::propagate(e));
+            }
             self.dirty = false;
             flushed_to_src = true;
         } else {
@@ -494,7 +514,9 @@ impl Handle {
     }
 
     fn wait_for_offset(&mut self, offset: u64, set_dirty: bool) -> error::Result<()> {
-        let mut page_in_res = self.page_in_res.0.lock().unwrap();
+        let &(ref lock, ref cvar) = &*self.page_in_res;
+
+        let mut page_in_res = lock.lock().unwrap();
         if set_dirty {
             // setting this to dirty prevents us from marking this as pristine
             page_in_res.dirty = true;
@@ -510,14 +532,15 @@ impl Handle {
             } else if let Some(e) = page_in_res.err.clone() {
                 return Err(e.clone());
             } else {
-                page_in_res = self.page_in_res.1.wait(page_in_res).unwrap();
+                page_in_res = cvar.wait(page_in_res).unwrap();
             }
         }
     }
 
-
     fn notify_offset(&self, res: error::Result<u64>, eof: bool) -> error::Result<()> {
-        let mut page_in_res = self.page_in_res.0.lock().unwrap();
+        let &(ref lock, ref cvar) = &*self.page_in_res;
+
+        let mut page_in_res = lock.lock().unwrap();
         if !eof && page_in_res.err.is_some() {
             // main IO thread sets this to cancel paging, but if eof
             // is reached then we might as well finish it
@@ -532,7 +555,7 @@ impl Handle {
         if eof && !page_in_res.dirty {
             self.set_pristine(true)?;
         }
-        self.page_in_res.1.notify_all();
+        cvar.notify_all();
         return Ok(());
     }
 
@@ -584,7 +607,7 @@ impl Handle {
         return Ok(offset);
     }
 
-    fn copy(&self, to_cache: bool) -> error::Result<()> {
+    fn copy(&self, to_cache: bool, disable_splice: bool) -> error::Result<()> {
         let rh: &File;
         let wh: &File;
         if to_cache {
@@ -602,15 +625,19 @@ impl Handle {
 
         let offset: u64;
 
-        match self.copy_splice(rh, wh) {
-            Err(e) => {
-                if e.raw_os_error().unwrap() == libc::EINVAL {
-                    offset = self.copy_user(rh, wh)?;
-                } else {
-                    return Err(e);
+        if disable_splice {
+            offset = self.copy_user(rh, wh)?;
+        } else {
+            match self.copy_splice(rh, wh) {
+                Err(e) => {
+                    if e.raw_os_error().unwrap() == libc::EINVAL {
+                        offset = self.copy_user(rh, wh)?;
+                    } else {
+                        return Err(e);
+                    }
                 }
+                Ok(off) => offset = off,
             }
-            Ok(off) => offset = off,
         }
 
         self.notify_offset(Ok(offset), true)?;

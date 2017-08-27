@@ -30,6 +30,7 @@ pub struct Inode {
     attr: fuse::FileAttr,
     time: Timespec,
     cache_valid_if_present: bool,
+    flush_failed: bool,
 
     refcnt: u64,
 }
@@ -63,6 +64,7 @@ impl Inode {
             attr: attr,
             time: time::get_time(),
             cache_valid_if_present: false,
+            flush_failed: false,
             refcnt: 1,
         };
     }
@@ -138,8 +140,30 @@ impl Inode {
     }
 
     pub fn refresh(&mut self) -> error::Result<()> {
-        self.attr = Inode::lookup_path(self.src_dir, &self.path)?;
+        match Inode::lookup_path(self.src_dir, &self.path) {
+            Ok(attr) => self.attr = attr,
+            Err(e) => {
+                if error::is_enoent(&e) {
+                    return Err(error::RError::propagate(e));
+                } else {
+                    return Err(error::RError::from(e));
+                }
+            }
+        }
+        // we know that this file really exist now, demand more from the pristineness
+        self.cache_valid_if_present = false;
+        self.flush_failed = true;
         return Ok(());
+    }
+
+    pub fn flush_failed(&mut self) {
+        // we know that flush failed, demand more from the pristineness
+        self.cache_valid_if_present = false;
+        self.flush_failed = true;
+    }
+
+    pub fn was_flush_failed(&self) -> bool {
+        self.flush_failed
     }
 
     pub fn lookup(&self, name: &OsStr) -> error::Result<Inode> {
@@ -186,6 +210,7 @@ impl Inode {
             &self.path,
             flags,
             self.cache_valid_if_present,
+            self.flush_failed,
             tp,
         )?;
         // Handle::open deletes the cache file if it was invalid, so

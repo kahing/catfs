@@ -121,7 +121,7 @@ impl CatFS {
             store: Mutex::new(Default::default()),
             dh_store: Mutex::new(Default::default()),
             fh_store: Mutex::new(Default::default()),
-            tp: Mutex::new(ThreadPool::new(100)),
+            tp: Mutex::new(ThreadPool::new(5)),
         };
 
         catfs.make_root()?;
@@ -264,8 +264,28 @@ impl Filesystem for CatFS {
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let store = self.store.lock().unwrap();
+        {
+            let inode = store.get(ino);
+            let inode = inode.read().unwrap();
+            if !inode.was_flush_failed() {
+                reply.attr(&self.ttl_now(), inode.get_attr());
+                debug!(
+                    "<-- getattr {} {:?} {} bytes",
+                    ino,
+                    inode.get_path(),
+                    inode.get_attr().size
+                );
+                return;
+            }
+        }
+
         let inode = store.get(ino);
-        let inode = inode.read().unwrap();
+        let mut inode = inode.write().unwrap();
+        if let Err(e) = inode.refresh() {
+            debug!("<-- !getattr {:?} = {}", inode.get_path(), e);
+            reply.error(error::errno(&e));
+            return;
+        }
         reply.attr(&self.ttl_now(), inode.get_attr());
         debug!(
             "<-- getattr {} {:?} {} bytes",
@@ -273,6 +293,7 @@ impl Filesystem for CatFS {
             inode.get_path(),
             inode.get_attr().size
         );
+        return;
     }
 
     fn setattr(
@@ -635,6 +656,11 @@ impl Filesystem for CatFS {
                 match file.flush() {
                     Ok(b) => flushed_to_src = b,
                     Err(e) => {
+                        let store = s.store.lock().unwrap();
+                        let inode = store.get(ino);
+                        let mut inode = inode.write().unwrap();
+                        inode.flush_failed();
+
                         error!("<-- !flush {:?} = {}", fh, e);
                         reply.error(error::errno(&e));
                         return;
