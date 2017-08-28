@@ -68,6 +68,8 @@ for fs in cat catfs sshfs catsshfs; do
 
 done
 
+fusermount -u target/src >& /dev/null || true
+
 rmdir target/src
 rmdir target/cache
 rmdir target/mnt
