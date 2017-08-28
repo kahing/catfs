@@ -2,6 +2,7 @@ Catfs is a caching filesystem written in Rust.
 
 [![Build Status](https://travis-ci.org/kahing/catfs.svg?branch=master)](https://travis-ci.org/kahing/catfs)
 [![Crates.io](https://img.shields.io/crates/v/catfs.svg)](https://crates.io/crates/catfs)
+[![Crates.io Downloads](https://img.shields.io/crates/d/catfs.svg)](https://crates.io/crates/catfs)
 
 # Overview
 
