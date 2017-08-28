@@ -25,6 +25,8 @@ LOCAL="cat"
 SSHFS="sshfs -f ${SSHFS_OPTS} target/mnt"
 
 function catsshfs {
+    # sometimes we wouldn't umount sshfs cleanly after the previous run
+    fusermount -u target/src >& /dev/null || true
     sshfs ${SSHFS_OPTS} target/src
     sleep 1
     catfs target/src target/cache target/mnt
