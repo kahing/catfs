@@ -99,7 +99,11 @@ other.
 
 # References
 
-* catfs is designed to work with [goofys](https://github.com/kahing/goofys/)
+* Catfs is designed to work with [goofys](https://github.com/kahing/goofys/)
 * [FS-Cache](https://www.kernel.org/doc/Documentation/filesystems/caching/fscache.txt)
   provides caching for some in kernel filesystems but doesn't support
   other FUSE filesystems.
+* Other similar fuse caching filesystems, no idea about their completeness:
+  * [fuse-cache](https://sourceforge.net/projects/fuse-cache/)
+  * [mcachefs](https://github.com/Doloops/mcachefs)
+  * [pcachefs](https://github.com/ibizaman/pcachefs)
