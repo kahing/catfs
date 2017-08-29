@@ -441,13 +441,15 @@ impl File {
     }
 
     #[allow(dead_code)]
-    pub fn set_size(&self, size: usize) -> io::Result<()> {
+    pub fn set_size(&self, size: usize) -> error::Result<()> {
         let old_size = self.filesize()?;
 
-        if size > old_size {
-            self.allocate(old_size as u64, size - old_size)?;
-        } else if old_size > size {
-            self.truncate(size)?;
+        if let Err(e) = self.truncate(size) {
+            if size > old_size && e.raw_os_error().unwrap() == libc::EPERM {
+                self.allocate(old_size as u64, size - old_size)?;
+            } else {
+                return Err(RError::from(e));
+            }
         }
 
         return Ok(());
