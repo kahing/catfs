@@ -219,6 +219,10 @@ impl Inode {
         return Ok(f);
     }
 
+    pub fn reopen_src(&self, file: &mut file::Handle) -> error::Result<()> {
+        file.reopen_src(self.src_dir, &self.path, self.cache_valid_if_present)
+    }
+
     pub fn unlink(&self, name: &OsStr) -> io::Result<()> {
         return file::Handle::unlink(self.src_dir, self.cache_dir, &self.get_child_name(name));
     }

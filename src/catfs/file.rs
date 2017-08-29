@@ -419,6 +419,7 @@ impl Handle {
                 {
                     if e.raw_os_error().unwrap() == libc::ENOTSUP {
                         self.write_through_failed = true;
+                        return Err(RError::propagate(e));
                     } else {
                         if bytes_written != 0 {
                             self.dirty = true;
@@ -556,6 +557,43 @@ impl Handle {
             self.set_pristine(true)?;
         }
         cvar.notify_all();
+        return Ok(());
+    }
+
+    pub fn reopen_src(
+        &mut self,
+        dir: RawFd,
+        path: &AsRef<Path>,
+        create: bool,
+    ) -> error::Result<()> {
+        let _ = self.page_in_res.0.lock().unwrap();
+
+        let mut buf = [0u8; 0];
+        let mut flags = rlibc::O_RDWR;
+        if let Err(e) = self.src_file.read_at(&mut buf, 0) {
+            if e.raw_os_error().unwrap() == libc::EBADF {
+                // this was not open for read
+                flags = rlibc::O_WRONLY;
+            } else {
+                return Err(RError::from(e));
+            }
+        }
+
+        let mut mode = 0;
+        if create {
+            let st = self.src_file.stat()?;
+            mode = st.st_mode & !libc::S_IFMT;
+            flags = flags | rlibc::O_CREAT;
+        }
+
+        if let Err(e) = self.src_file.close() {
+            // normal for this close to fail
+            if e.raw_os_error().unwrap() != libc::ENOTSUP {
+                return Err(RError::from(e));
+            }
+        }
+
+        self.src_file = File::openat(dir, path, flags, mode)?;
         return Ok(());
     }
 

@@ -617,18 +617,38 @@ impl Filesystem for CatFS {
             let file = fh_store.handles.get(&fh).unwrap();
             let mut file = file.lock().unwrap();
             // TODO spawn a thread
-            match file.write(offset, data) {
-                Ok(nbytes) => nwritten = nbytes,
-                Err(e) => {
-                    error!(
-                        "<-- !write 0x{:016x} {:?} @ {} = {}",
-                        fh,
-                        OsStr::from_bytes(&data[..cmp::min(32, data.len())]),
-                        offset,
-                        e
-                    );
-                    reply.error(e.raw_os_error().unwrap());
-                    return;
+            loop {
+                match file.write(offset, data) {
+                    Ok(nbytes) => {
+                        nwritten = nbytes;
+                        break;
+                    }
+                    Err(e) => {
+                        if e.errno() == libc::ENOTSUP {
+                            debug!("write rejected, reopening for sequential write");
+                            // the src filesystem rejected our write,
+                            // maybe because this is random
+                            // write. reopen the src and try again
+                            let store = self.store.lock().unwrap();
+                            let inode = store.get(ino);
+                            let inode = inode.read().unwrap();
+
+                            if let Err(e2) = inode.reopen_src(&mut file) {
+                                reply.error(e2.raw_os_error().unwrap());
+                                return;
+                            }
+                        } else {
+                            error!(
+                                "<-- !write 0x{:016x} {:?} @ {} = {}",
+                                fh,
+                                OsStr::from_bytes(&data[..cmp::min(32, data.len())]),
+                                offset,
+                                e
+                            );
+                            reply.error(e.raw_os_error().unwrap());
+                            return;
+                        }
+                    }
                 }
             }
         }

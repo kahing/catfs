@@ -76,6 +76,12 @@ impl<E> RError<E> {
     }
 }
 
+impl RError<io::Error> {
+    pub fn errno(&self) -> i32 {
+        return self.e.raw_os_error().unwrap();
+    }
+}
+
 impl fmt::Display for RError<io::Error> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.bt {
