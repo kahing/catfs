@@ -105,7 +105,7 @@ impl<'a> Fixture for CatFSTests<'a> {
         };
 
         if let Some(v) = env::var_os("CATFS_SELF_HOST") {
-            if v == OsStr::new("1") {
+            if v == OsStr::new("1") || v == OsStr::new("true") {
                 let mnt = t.mnt.clone();
                 let mut mnt2 = mnt.as_os_str().to_os_string();
                 mnt2.push("2");
@@ -329,7 +329,7 @@ unit_tests!{
 
     fn checksum_str(f: &CatFSTests) {
         if let Some(v) = env::var_os("CATFS_SELF_HOST") {
-            if v == OsStr::new("1") {
+            if v == OsStr::new("1") || v == OsStr::new("true") {
                 // skip this test since we don't support xattr for now
                 return;
             }
