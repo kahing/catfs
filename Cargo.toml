@@ -1,6 +1,6 @@
 [package]
 name = "catfs"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Ka-Hing Cheung <khc@hxbc.us>"]
 description = "Cache AnyThing filesystem"
 keywords = ["filesystem", "fuse", "cache"]
