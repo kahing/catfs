@@ -60,7 +60,7 @@ plot ARG1 using 2:3:4 title " ", \
 set origin 0.7,0.1
 set size 0.2,0.8
 set xrange [6.5:7.7]
-set yrange [0:1.1]
+set yrange [0:0.05]
 
 plot ARG1 using 2:3:4 title " ", \
      '' using 5:6:7 title " ", \
