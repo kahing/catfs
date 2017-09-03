@@ -87,10 +87,11 @@ Catfs is ALPHA software. Don't use this if you value your data.
 Entire file is cached if it's open for read, even if nothing is
 actually read.
 
-Data is first written to the cache and the entire file is always
-written back to the original filesystem on `close()`, so effectively
-it's a write-through cache. Note that even changing one byte will
-cause the entire file to be re-written.
+Data is written-through to the source and also cached for each
+write. In case of non-sequential writes, `catfs` detects `ENOTSUP`
+emitted by filesystems like `goofys` and falls back to flush the
+entire file on `close()`. Note that in the latter case even changing
+one byte will cause the entire file to be re-written.
 
 Paging in/writeback are done in background threads. All other requests
 are serviced on the same thread, so many operations could block each
