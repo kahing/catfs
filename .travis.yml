@@ -29,4 +29,4 @@ before_cache:
 before_script:
   - export PATH=$PATH:/var/lib/xfstests/ltp
 script:
-  - (cargo test large_dir && cargo test) || (if [ -e core* ]; then gdb --batch --ex "thread apply all bt" $(file core* | cut -d\' -f 2) core*; fi; false)
+  - (cargo test 2>xout) || (if [ -e core* ]; then tail -1000 xout; gdb --batch --ex "thread apply all bt" $(file core* | cut -d\' -f 2) core*; fi; false)
