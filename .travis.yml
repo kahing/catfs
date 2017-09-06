@@ -14,6 +14,12 @@ sudo: required
 before_install:
   - sudo apt-get -qq update
   - sudo apt-get install -y libfuse-dev apport
+  # from https://git.kernel.org/pub/scm/fs/xfs/xfstests-dev.git/plain/README
+  - sudo apt-get install xfslibs-dev uuid-dev e2fsprogs automake gcc libuuid1 quota attr libattr1-dev make libacl1-dev libaio-dev xfsprogs libgdbm-dev gawk fio dbench uuid-runtime
+  - git clone https://git.kernel.org/pub/scm/fs/xfs/xfstests-dev.git/ && cd xfstests-dev && make && sudo make install
+  - sudo useradd fsgqa
+  - sudo useradd 123456-fsgqa
+  
 matrix:
   allow_failures:
     - rust: nightly
