@@ -26,6 +26,7 @@ matrix:
 cache: cargo
 before_cache:
   - rm -Rf target/test/
+before_script:
   - export PATH=$PATH:/var/lib/xfstests/ltp
 script:
   - (cargo test large_dir && cargo test) || (if [ -e core* ]; then gdb --batch --ex "thread apply all bt" $(file core* | cut -d\' -f 2) core*; fi; false)
