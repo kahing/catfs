@@ -139,6 +139,12 @@ impl Inode {
         return Ok(attr);
     }
 
+    pub fn flushed(&mut self) {
+        // we know that this file really exist now, demand more from the pristineness
+        self.cache_valid_if_present = false;
+        self.flush_failed = false;
+    }
+
     pub fn refresh(&mut self) -> error::Result<()> {
         match Inode::lookup_path(self.src_dir, &self.path) {
             Ok(attr) => self.attr = attr,
@@ -150,9 +156,7 @@ impl Inode {
                 }
             }
         }
-        // we know that this file really exist now, demand more from the pristineness
-        self.cache_valid_if_present = false;
-        self.flush_failed = true;
+
         return Ok(());
     }
 

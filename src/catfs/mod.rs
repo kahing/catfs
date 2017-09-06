@@ -686,20 +686,21 @@ impl Filesystem for CatFS {
         let s = make_self(self);
         self.tp.lock().unwrap().execute(move || {
             let flushed_to_src: bool;
+            let inode: Arc<RwLock<Inode>>;
             {
                 // first flush locally
                 let file: Arc<Mutex<file::Handle>>;
                 {
                     let fh_store = s.fh_store.lock().unwrap();
                     file = fh_store.handles.get(&fh).unwrap().clone();
+                    let store = s.store.lock().unwrap();
+                    inode = store.get(ino);
                 }
 
                 let mut file = file.lock().unwrap();
                 match file.flush() {
                     Ok(b) => flushed_to_src = b,
                     Err(e) => {
-                        let store = s.store.lock().unwrap();
-                        let inode = store.get(ino);
                         let mut inode = inode.write().unwrap();
                         inode.flush_failed();
 
@@ -711,9 +712,8 @@ impl Filesystem for CatFS {
             }
 
             if flushed_to_src {
-                let store = s.store.lock().unwrap();
-                let inode = store.get(ino);
                 let mut inode = inode.write().unwrap();
+                inode.flushed();
 
                 // refresh attr with the original file so it will be consistent with lookup
                 if let Err(e) = inode.refresh() {
@@ -723,6 +723,8 @@ impl Filesystem for CatFS {
                 }
                 debug!("<-- flush {:?}", inode.get_path());
             } else {
+                let mut inode = inode.write().unwrap();
+                inode.flushed();
                 debug!("<-- flush ino: {} fh: {}", ino, fh);
             }
 
