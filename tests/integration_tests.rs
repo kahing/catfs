@@ -84,6 +84,8 @@ impl<'a> Fixture for CatFSTests<'a> {
     fn setup() -> error::Result<CatFSTests<'a>> {
         let _ = env_logger::init();
 
+        let _ = fs::create_dir(CatFSTests::get_orig_dir().join("dir2"));
+
         let prefix = catfs::catfs::tests::copy_resources();
         let mnt = prefix.join("mnt");
         let resources = prefix.join("resources");
@@ -91,8 +93,6 @@ impl<'a> Fixture for CatFSTests<'a> {
 
         fs::create_dir_all(&mnt)?;
         fs::create_dir_all(&cache)?;
-
-        let _ = fs::create_dir(CatFSTests::get_orig_dir().join("dir2"));
 
         let t = CatFSTests {
             prefix: prefix,
