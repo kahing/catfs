@@ -329,29 +329,33 @@ impl Filesystem for CatFS {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
         let mut inode = inode.write().unwrap();
-
-        let was_valid = file::Handle::validate_cache(
-            self.src_dir,
-            self.cache_dir,
-            &inode.get_path(),
-            false,
-            true,
-        );
-
-        if let Err(e) = was_valid {
-            error!("<-- !setattr {:?} = {}", inode.get_path(), e);
-            reply.error(e.raw_os_error().unwrap());
-            return;
-        }
+        let was_valid: error::Result<bool>;
 
         let file: Option<Arc<Mutex<file::Handle>>>;
         if let Some(fh) = fh {
             let fh_store = self.fh_store.lock().unwrap();
             file = Some(fh_store.handles.get(&fh).unwrap().clone());
+            // if we had the file open, then we know that it's valid
+            was_valid = Ok(true);
         } else {
             file = None;
-        }
 
+            // if we change the size or mtime then we need to restore the
+            // checksum xattr. XXX make this thing atomic
+            was_valid = file::Handle::validate_cache(
+                self.src_dir,
+                self.cache_dir,
+                &inode.get_path(),
+                file.is_some(),
+                true,
+            );
+
+            if let Err(e) = was_valid {
+                error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                reply.error(e.raw_os_error().unwrap());
+                return;
+            }
+        }
 
         if let Some(mode) = mode {
             if let Some(ref file) = file {
@@ -403,16 +407,28 @@ impl Filesystem for CatFS {
             }
         }
 
+        // still need to restore the checksum even if a file handle is
+        // supplied, because we may never flush that file handle
         if was_valid.unwrap() {
-            if let Err(e) = file::Handle::make_pristine(
-                self.src_dir,
-                self.cache_dir,
-                &inode.get_path(),
-            )
-            {
-                error!("<-- !setattr {:?} = {}", inode.get_path(), e);
-                reply.error(e.raw_os_error().unwrap());
-                return;
+            if let Some(ref file) = file {
+                let file = file.lock().unwrap();
+
+                if let Err(e) = file.set_pristine(true) {
+                    error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                    reply.error(e.raw_os_error().unwrap());
+                    return;
+                }
+            } else {
+                if let Err(e) = file::Handle::make_pristine(
+                    self.src_dir,
+                    self.cache_dir,
+                    &inode.get_path(),
+                )
+                {
+                    error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                    reply.error(e.raw_os_error().unwrap());
+                    return;
+                }
             }
         }
 
@@ -420,6 +436,12 @@ impl Filesystem for CatFS {
             error!("<-- !setattr {:?} = {}", inode.get_path(), e);
             reply.error(e.raw_os_error().unwrap());
         } else {
+            debug!(
+                "<-- setattr {:?} 0x{:016x} 0x{:?}",
+                inode.get_path(),
+                ino,
+                fh
+            );
             reply.attr(&self.ttl_now(), inode.get_attr());
         }
     }

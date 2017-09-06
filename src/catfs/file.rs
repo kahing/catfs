@@ -260,7 +260,7 @@ impl Handle {
         return Ok(());
     }
 
-    fn set_pristine(&self, pristine: bool) -> error::Result<()> {
+    pub fn set_pristine(&self, pristine: bool) -> error::Result<()> {
         if pristine {
             self.cache_file.set_xattr(
                 "user.catfs.src_chksum",
@@ -312,9 +312,9 @@ impl Handle {
                         if cache_valid_if_present || Handle::is_pristine(&src_file, &cache_file)? {
                             valid = true;
                         } else {
-                            error!("{:?} is not a valid cache file, deleting", path.as_ref());
                             valid = false;
                             if !check_only {
+                                error!("{:?} is not a valid cache file, deleting", path.as_ref());
                                 rlibc::unlinkat(cache_dir, path, 0)?;
                             }
                         }
