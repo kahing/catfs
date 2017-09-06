@@ -469,4 +469,26 @@ unit_tests!{
             .expect("failed to execute `fsx'");
         assert!(status.success());
     }
+
+    fn prefetch_canceled(f: &CatFSTests) {
+        let file1 = f.mnt.join("file1");
+        {
+            let _ = File::open(&file1).unwrap();
+        }
+
+        {
+            let file1 = Path::new(&f.cache).join("file1");
+            let mut fh = OpenOptions::new().write(true).truncate(true).create(true)
+                .open(&file1).unwrap();
+            fh.write_all(b"f").unwrap();
+            let _ = xattr::remove(&file1, "user.catfs.src_chksum");
+        }
+
+        {
+            let mut s = String::new();
+            let mut f = File::open(&file1).unwrap();
+            f.read_to_string(&mut s).unwrap();
+            assert_eq!(s, "file1\n");
+        }
+    }
 }
