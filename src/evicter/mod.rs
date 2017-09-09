@@ -118,7 +118,7 @@ impl Evicter {
         return to_evict(&self.low_watermark, st);
     }
 
-    fn loop_once(&self) -> error::Result<()> {
+    pub fn loop_once(&self) -> error::Result<()> {
         let st = (self.statvfs)(self.dir)?;
 
         let to_evict_bytes = self.should_evict(&st);

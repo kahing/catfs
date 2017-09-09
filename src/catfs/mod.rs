@@ -30,6 +30,8 @@ mod inode;
 mod substr;
 
 use self::inode::Inode;
+use self::flags::DiskSpace;
+use super::evicter::Evicter;
 
 #[derive(Default)]
 struct InodeStore {
@@ -636,6 +638,15 @@ impl CatFS {
                                 reply.error(e2.raw_os_error().unwrap());
                                 return;
                             }
+                        } else if e.errno() == libc::ENOSPC {
+                            debug!(
+                                "write(0x{:016x}, 0x{:016x}, {}) = ENOSPC",
+                                ino,
+                                fh,
+                                data.len()
+                            );
+                            let _ = Evicter::new(self.cache_dir, &DiskSpace::Percent(1.0))
+                                .loop_once();
                         } else {
                             error!(
                                 "<-- !write 0x{:016x} {:?} @ {} = {}",
