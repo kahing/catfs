@@ -93,14 +93,6 @@ emitted by filesystems like `goofys` and falls back to flush the
 entire file on `close()`. Note that in the latter case even changing
 one byte will cause the entire file to be re-written.
 
-Paging in/writeback are done in background threads. All other requests
-are serviced on the same thread, so many operations could block each
-other.
-
-## TODO
-
-* move all operations to background threads
-
 # References
 
 * Catfs is designed to work with [goofys](https://github.com/kahing/goofys/)

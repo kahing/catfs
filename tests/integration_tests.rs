@@ -24,6 +24,7 @@ use catfs::catfs::flags::DiskSpace;
 use catfs::catfs::file;
 use catfs::catfs::rlibc;
 use catfs::evicter::Evicter;
+use catfs::pcatfs::PCatFS;
 
 #[macro_use]
 mod test_suite;
@@ -63,6 +64,7 @@ impl<'a> CatFSTests<'a> {
 
     fn mount(&self) -> error::Result<(fuse::BackgroundSession<'a>, Evicter)> {
         let fs = CatFS::new(&self.src, &self.cache)?;
+        let fs = PCatFS::new(fs);
 
         let cache_dir = fs.get_cache_dir()?;
         // essentially no-op, but ensures that it starts and terminates

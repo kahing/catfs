@@ -22,6 +22,7 @@ use clap::{App, Arg};
 use env_logger::LogBuilder;
 use log::LogRecord;
 
+mod pcatfs;
 mod catfs;
 mod flags;
 mod evicter;
@@ -156,6 +157,7 @@ fn main_internal() -> error::Result<()> {
     let path_from = Path::new(&flags.cat_from).canonicalize()?;
     let path_to = Path::new(&flags.cat_to).canonicalize()?;
     let fs = catfs::CatFS::new(&path_from, &path_to)?;
+    let fs = pcatfs::PCatFS::new(fs);
     let cache_dir = fs.get_cache_dir()?;
     let mut options: Vec<&OsStr> = Vec::new();
     for i in 0..flags.mount_options.len() {

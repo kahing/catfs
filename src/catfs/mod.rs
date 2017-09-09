@@ -3,8 +3,8 @@ extern crate libc;
 extern crate threadpool;
 extern crate time;
 
-use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty,
-                 ReplyDirectory, ReplyData, ReplyWrite, ReplyCreate};
+use self::fuse::{ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty, ReplyDirectory, ReplyData,
+                 ReplyWrite, ReplyCreate};
 
 use self::time::{Duration, Timespec};
 
@@ -180,10 +180,8 @@ impl CatFS {
     fn ttl_now(&self) -> time::Timespec {
         return time::get_time() + self.ttl;
     }
-}
 
-impl Filesystem for CatFS {
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    pub fn lookup(&mut self, parent: u64, name: OsString, reply: ReplyEntry) {
         let parent_inode: Arc<RwLock<Inode>>;
         let mut old_inode: Option<Arc<RwLock<Inode>>> = None;
         let path: PathBuf;
@@ -191,7 +189,7 @@ impl Filesystem for CatFS {
             let mut store = self.store.lock().unwrap();
             parent_inode = store.get(parent);
             let parent_inode = parent_inode.read().unwrap();
-            path = parent_inode.get_child_name(name);
+            path = parent_inode.get_child_name(&name);
             if let Some(ref mut i) = store.get_mut_by_path(&path) {
                 old_inode = Some(i.clone());
                 let mut inode = i.write().unwrap();
@@ -219,9 +217,8 @@ impl Filesystem for CatFS {
             }
         }
 
-        // TODO spawn a thread to do lookup
         let parent_inode = parent_inode.read().unwrap();
-        match parent_inode.lookup(name) {
+        match parent_inode.lookup(&name) {
             Ok(new_inode) => {
                 if let Some(inode) = old_inode {
                     let mut inode = inode.write().unwrap();
@@ -235,14 +232,16 @@ impl Filesystem for CatFS {
                         inode.get_refcnt(),
                     );
                 } else {
-                    reply.entry(&self.ttl_now(), &new_inode.get_attr(), 0);
                     debug!(
                         "<-- lookup {:?} = 0x{:016x}, {:?} refcnt *1",
                         new_inode.get_path(),
                         new_inode.get_ino(),
                         new_inode.get_kind()
                     );
+                    let attr = new_inode.get_attr().clone();
                     self.insert_inode(new_inode);
+
+                    reply.entry(&self.ttl_now(), &attr, 0);
                 }
             }
             Err(e) => {
@@ -259,10 +258,9 @@ impl Filesystem for CatFS {
                 reply.error(error::errno(&e));
             }
         }
-
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+    pub fn getattr(&mut self, ino: u64, reply: ReplyAttr) {
         let store = self.store.lock().unwrap();
         {
             let inode = store.get(ino);
@@ -296,9 +294,8 @@ impl Filesystem for CatFS {
         return;
     }
 
-    fn setattr(
+    pub fn setattr(
         &mut self,
-        _req: &Request,
         ino: u64,
         mode: Option<u32>,
         uid: Option<u32>,
@@ -446,7 +443,7 @@ impl Filesystem for CatFS {
         }
     }
 
-    fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {
+    pub fn forget(&mut self, ino: u64, nlookup: u64) {
         let mut store = self.store.lock().unwrap();
         let stale: bool;
         {
@@ -460,7 +457,7 @@ impl Filesystem for CatFS {
         }
     }
 
-    fn opendir(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+    pub fn opendir(&mut self, ino: u64, flags: u32, reply: ReplyOpen) {
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
         let inode = inode.read().unwrap();
@@ -481,17 +478,9 @@ impl Filesystem for CatFS {
         }
     }
 
-    fn readdir(
-        &mut self,
-        _req: &Request,
-        _ino: u64,
-        dh: u64,
-        offset: u64,
-        mut reply: ReplyDirectory,
-    ) {
+    pub fn readdir(&mut self, _ino: u64, dh: u64, offset: u64, mut reply: ReplyDirectory) {
         let mut dh_store = self.dh_store.lock().unwrap();
         let mut dir = dh_store.handles.get_mut(&dh).unwrap();
-        // TODO spawn a thread
         dir.seekdir(offset);
         loop {
             match dir.readdir() {
@@ -522,49 +511,38 @@ impl Filesystem for CatFS {
         reply.ok();
     }
 
-    fn releasedir(&mut self, _req: &Request, _ino: u64, dh: u64, _flags: u32, reply: ReplyEmpty) {
+    pub fn releasedir(&mut self, _ino: u64, dh: u64, _flags: u32, reply: ReplyEmpty) {
         let mut dh_store = self.dh_store.lock().unwrap();
         // the handle will be destroyed and closed
         dh_store.handles.remove(&dh);
         reply.ok();
     }
 
-    fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
-        let s = make_self(self);
-        self.tp.lock().unwrap().execute(move || {
-            let inode: Arc<RwLock<Inode>>;
-            {
-                let store = s.store.lock().unwrap();
-                inode = store.get(ino);
-            }
+    pub fn open(&mut self, ino: u64, flags: u32, reply: ReplyOpen) {
+        let inode: Arc<RwLock<Inode>>;
+        {
+            let store = self.store.lock().unwrap();
+            inode = store.get(ino);
+        }
 
-            let mut inode = inode.write().unwrap();
-            match inode.open(flags, &s.tp) {
-                Ok(file) => {
-                    let mut fh_store = s.fh_store.lock().unwrap();
-                    let fh = fh_store.next_id;
-                    fh_store.next_id += 1;
-                    fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));
-                    reply.opened(fh, flags);
-                    debug!("<-- open {:?} = {}", inode.get_path(), fh);
-                }
-                Err(e) => {
-                    reply.error(error::errno(&e));
-                    error!("<-- !open {:?} = {}", inode.get_path(), e);
-                }
+        let mut inode = inode.write().unwrap();
+        match inode.open(flags, &self.tp) {
+            Ok(file) => {
+                let mut fh_store = self.fh_store.lock().unwrap();
+                let fh = fh_store.next_id;
+                fh_store.next_id += 1;
+                fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));
+                reply.opened(fh, flags);
+                debug!("<-- open {:?} = {}", inode.get_path(), fh);
             }
-        });
+            Err(e) => {
+                reply.error(error::errno(&e));
+                error!("<-- !open {:?} = {}", inode.get_path(), e);
+            }
+        }
     }
 
-    fn read(
-        &mut self,
-        _req: &Request,
-        _ino: u64,
-        fh: u64,
-        offset: u64,
-        size: u32,
-        reply: ReplyData,
-    ) {
+    pub fn read(&mut self, _ino: u64, fh: u64, offset: u64, size: u32, reply: ReplyData) {
         let fh_store = self.fh_store.lock().unwrap();
         let file = fh_store.handles.get(&fh).unwrap();
         // TODO spawn a thread
@@ -582,11 +560,10 @@ impl Filesystem for CatFS {
         }
     }
 
-    fn create(
+    pub fn create(
         &mut self,
-        _req: &Request,
         parent: u64,
-        name: &OsStr,
+        name: OsString,
         mode: u32,
         flags: u32,
         reply: ReplyCreate,
@@ -598,7 +575,7 @@ impl Filesystem for CatFS {
         }
 
         let parent_inode = parent_inode.read().unwrap();
-        match parent_inode.create(name, mode) {
+        match parent_inode.create(&name, mode) {
             Ok((inode, file)) => {
                 let fh: u64;
                 {
@@ -608,14 +585,15 @@ impl Filesystem for CatFS {
                     fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));
                 }
 
-                reply.created(&self.ttl_now(), &inode.get_attr(), 0, fh, flags);
+                let attr = inode.get_attr().clone();
                 debug!("<-- create {:?} = {}", inode.get_path(), fh);
                 self.insert_inode(inode);
+                reply.created(&self.ttl_now(), &attr, 0, fh, flags);
             }
             Err(e) => {
                 error!(
                     "<-- !create {:?} = {}",
-                    parent_inode.get_child_name(name),
+                    parent_inode.get_child_name(&name),
                     e
                 );
                 reply.error(e.raw_os_error().unwrap());
@@ -623,13 +601,12 @@ impl Filesystem for CatFS {
         }
     }
 
-    fn write(
+    pub fn write(
         &mut self,
-        _req: &Request,
         ino: u64,
         fh: u64,
         offset: u64,
-        data: &[u8],
+        data: Vec<u8>,
         _flags: u32,
         reply: ReplyWrite,
     ) {
@@ -640,7 +617,7 @@ impl Filesystem for CatFS {
             let mut file = file.lock().unwrap();
             // TODO spawn a thread
             loop {
-                match file.write(offset, data) {
+                match file.write(offset, &data) {
                     Ok(nbytes) => {
                         nwritten = nbytes;
                         break;
@@ -675,14 +652,14 @@ impl Filesystem for CatFS {
             }
         }
 
-        reply.written(nwritten as u32);
         let store = self.store.lock().unwrap();
         let inode = store.get(ino);
         let mut inode = inode.write().unwrap();
         inode.extend(offset + (nwritten as u64));
+        reply.written(nwritten as u32);
     }
 
-    fn flush(&mut self, _req: &Request, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
+    pub fn flush(&mut self, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         let s = make_self(self);
         self.tp.lock().unwrap().execute(move || {
             let flushed_to_src: bool;
@@ -732,9 +709,8 @@ impl Filesystem for CatFS {
         });
     }
 
-    fn release(
+    pub fn release(
         &mut self,
-        _req: &Request,
         _ino: u64,
         fh: u64,
         _flags: u32,
@@ -748,7 +724,7 @@ impl Filesystem for CatFS {
         reply.ok();
     }
 
-    fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    pub fn unlink(&mut self, parent: u64, name: OsString, reply: ReplyEmpty) {
         let parent_inode: Arc<RwLock<Inode>>;
         {
             let store = self.store.lock().unwrap();
@@ -756,8 +732,8 @@ impl Filesystem for CatFS {
         }
 
         let parent_inode = parent_inode.read().unwrap();
-        let path = parent_inode.get_child_name(name);
-        if let Err(e) = parent_inode.unlink(name) {
+        let path = parent_inode.get_child_name(&name);
+        if let Err(e) = parent_inode.unlink(&name) {
             debug!("<-- !unlink {:?} = {}", path, e);
             reply.error(e.raw_os_error().unwrap());
         } else {
@@ -767,7 +743,7 @@ impl Filesystem for CatFS {
         }
     }
 
-    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    pub fn rmdir(&mut self, parent: u64, name: OsString, reply: ReplyEmpty) {
         let parent_inode: Arc<RwLock<Inode>>;
         {
             let store = self.store.lock().unwrap();
@@ -775,7 +751,7 @@ impl Filesystem for CatFS {
         }
 
         let parent_inode = parent_inode.read().unwrap();
-        if let Err(e) = parent_inode.rmdir(name) {
+        if let Err(e) = parent_inode.rmdir(&name) {
             debug!(
                 "<-- !rmdir {:?}/{:?} = {}",
                 parent_inode.get_path(),
@@ -785,12 +761,12 @@ impl Filesystem for CatFS {
             reply.error(e.raw_os_error().unwrap());
         } else {
             debug!("<-- rmdir {:?}/{:?}", parent_inode.get_path(), name);
-            reply.ok();
             self.remove_path(&parent_inode.get_path().join(name));
+            reply.ok();
         }
     }
 
-    fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, mode: u32, reply: ReplyEntry) {
+    pub fn mkdir(&mut self, parent: u64, name: OsString, mode: u32, reply: ReplyEntry) {
         let parent_inode: Arc<RwLock<Inode>>;
         {
             let store = self.store.lock().unwrap();
@@ -798,11 +774,12 @@ impl Filesystem for CatFS {
         }
 
         let parent_inode = parent_inode.read().unwrap();
-        match parent_inode.mkdir(name, mode) {
+        match parent_inode.mkdir(&name, mode) {
             Ok(inode) => {
-                reply.entry(&self.ttl_now(), inode.get_attr(), 0);
                 debug!("<-- mkdir {:?}/{:?}", parent_inode.get_path(), name);
+                let attr = inode.get_attr().clone();
                 self.insert_inode(inode);
+                reply.entry(&self.ttl_now(), &attr, 0);
             }
             Err(e) => {
                 debug!(
@@ -816,13 +793,12 @@ impl Filesystem for CatFS {
         }
     }
 
-    fn rename(
+    pub fn rename(
         &mut self,
-        _req: &Request,
         parent: u64,
-        name: &OsStr,
+        name: OsString,
         newparent: u64,
-        newname: &OsStr,
+        newname: OsString,
         reply: ReplyEmpty,
     ) {
         let inode: Arc<RwLock<Inode>>;
@@ -836,8 +812,8 @@ impl Filesystem for CatFS {
             let parent_inode = parent_inode.read().unwrap();
             let new_parent_inode = new_parent_inode.read().unwrap();
 
-            path = parent_inode.get_child_name(name);
-            new_path = new_parent_inode.get_child_name(newname);
+            path = parent_inode.get_child_name(&name);
+            new_path = new_parent_inode.get_child_name(&newname);
 
             match store.get_mut_by_path(&path) {
                 Some(i) => inode = i,
@@ -846,7 +822,7 @@ impl Filesystem for CatFS {
         }
 
         let mut inode = inode.write().unwrap();
-        if let Err(e) = inode.rename(newname, &new_path) {
+        if let Err(e) = inode.rename(&newname, &new_path) {
             debug!("<-- !rename {:?} -> {:?} = {}", path, new_path, e);
             reply.error(e.raw_os_error().unwrap());
         } else {
