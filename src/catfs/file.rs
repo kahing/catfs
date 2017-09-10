@@ -186,6 +186,8 @@ impl Handle {
                     if !is_cancel {
                         error!("read ahead {:?} failed: {}", path, e);
                         h.notify_offset(Err(e), false).unwrap();
+                    } else {
+                        debug!("read ahead {:?} canceled", path);
                     }
                 }
                 // the files are always closed in the main IO path, consume
