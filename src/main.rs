@@ -61,6 +61,13 @@ fn main_internal() -> error::Result<()> {
     let mut flags: FlagStorage = Default::default();
     let mut test = false;
 
+    flags.mount_options.push(OsString::from("-o"));
+    flags.mount_options.push(OsString::from("atomic_o_trunc"));
+    flags.mount_options.push(OsString::from("-o"));
+    flags.mount_options.push(
+        OsString::from("default_permissions"),
+    );
+
     let app = App::new("catfs")
         .about("Cache Anything FileSystem")
         .version(crate_version!());
@@ -148,11 +155,6 @@ fn main_internal() -> error::Result<()> {
         return Ok(());
     }
 
-    flags.mount_options.push(OsString::from("-o"));
-    flags.mount_options.push(
-        OsString::from("default_permissions"),
-    );
-
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
     let path_from = Path::new(&flags.cat_from).canonicalize()?;
     let path_to = Path::new(&flags.cat_to).canonicalize()?;
@@ -163,6 +165,8 @@ fn main_internal() -> error::Result<()> {
     for i in 0..flags.mount_options.len() {
         options.push(&flags.mount_options[i]);
     }
+
+    debug!("options are {:?}", flags.mount_options);
 
     {
         let mut session = fuse::Session::new(fs, Path::new(&flags.mount_point), &options)?;
