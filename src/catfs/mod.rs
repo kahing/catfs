@@ -14,7 +14,7 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::RawFd;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 use std::path::{Path, PathBuf};
 
 use self::threadpool::ThreadPool;
@@ -165,6 +165,11 @@ impl CatFS {
             );
         }
         store.inodes.insert(ino, Arc::new(RwLock::new(inode)));
+    }
+
+    fn get_inode(&self, ino: u64) -> Arc<RwLock<Inode>> {
+        let store = self.store.lock().unwrap();
+        return store.get(ino);
     }
 
     fn replace_path(&mut self, path: &Path, new_path: PathBuf) {
@@ -325,20 +330,24 @@ impl CatFS {
             return;
         }
 
-        let store = self.store.lock().unwrap();
-        let inode = store.get(ino);
-        let mut inode = inode.write().unwrap();
+        let inode_ref: Arc<RwLock<Inode>>;
+        let mut inode: RwLockWriteGuard<Inode>;
         let was_valid: error::Result<bool>;
 
-        let file: Option<Arc<Mutex<file::Handle>>>;
+        let file_ref: Arc<Mutex<file::Handle>>;
+        let mut file: Option<MutexGuard<file::Handle>>;
         if let Some(fh) = fh {
             let fh_store = self.fh_store.lock().unwrap();
-            file = Some(fh_store.handles.get(&fh).unwrap().clone());
+            file_ref = fh_store.handles.get(&fh).unwrap().clone();
+            file = Some(file_ref.lock().unwrap());
             // if we had the file open, then we know that it's valid
             was_valid = Ok(true);
+            inode_ref = self.get_inode(ino);
+            inode = inode_ref.write().unwrap();
         } else {
             file = None;
-
+            inode_ref = self.get_inode(ino);
+            inode = inode_ref.write().unwrap();
             // if we change the size or mtime then we need to restore the
             // checksum xattr. XXX make this thing atomic
             was_valid = file::Handle::validate_cache(
@@ -350,7 +359,7 @@ impl CatFS {
             );
 
             if let Err(e) = was_valid {
-                error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                error!("<-- !setattr {:16x} = {}", ino, e);
                 reply.error(e.raw_os_error().unwrap());
                 return;
             }
@@ -358,9 +367,8 @@ impl CatFS {
 
         if let Some(mode) = mode {
             if let Some(ref file) = file {
-                let file = file.lock().unwrap();
                 if let Err(e) = file.chmod(mode) {
-                    error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                    error!("<-- !setattr {:16x} = {}", ino, e);
                     reply.error(e.raw_os_error().unwrap());
                     return;
                 }
@@ -374,11 +382,9 @@ impl CatFS {
         }
 
         if let Some(size) = size {
-            if let Some(ref file) = file {
-                let mut file = file.lock().unwrap();
-
+            if let Some(ref mut file) = file {
                 if let Err(e) = file.truncate(size as usize) {
-                    error!("<-- !setattr {:?} = {}", inode.get_path(), e);
+                    error!("<-- !setattr {:16x} = {}", ino, e);
                     reply.error(e.raw_os_error().unwrap());
                     return;
                 }
@@ -410,8 +416,6 @@ impl CatFS {
         // supplied, because we may never flush that file handle
         if was_valid.unwrap() {
             if let Some(ref file) = file {
-                let file = file.lock().unwrap();
-
                 if let Err(e) = file.set_pristine(true) {
                     error!("<-- !setattr {:?} = {}", inode.get_path(), e);
                     reply.error(e.raw_os_error().unwrap());
@@ -545,8 +549,11 @@ impl CatFS {
     }
 
     pub fn read(&mut self, _ino: u64, fh: u64, offset: u64, size: u32, reply: ReplyData) {
-        let fh_store = self.fh_store.lock().unwrap();
-        let file = fh_store.handles.get(&fh).unwrap();
+        let file: Arc<Mutex<file::Handle>>;
+        {
+            let fh_store = self.fh_store.lock().unwrap();
+            file = fh_store.handles.get(&fh).unwrap().clone();
+        }
         // TODO spawn a thread
         let mut buf: Vec<u8> = Vec::with_capacity(size as usize);
         buf.resize(size as usize, 0u8);
@@ -692,7 +699,7 @@ impl CatFS {
                         let mut inode = inode.write().unwrap();
                         inode.flush_failed();
 
-                        error!("<-- !flush {:?} = {}", fh, e);
+                        error!("<-- !flush {:016x} = {}", fh, e);
                         reply.error(error::errno(&e));
                         return;
                     }
@@ -713,7 +720,7 @@ impl CatFS {
             } else {
                 let mut inode = inode.write().unwrap();
                 inode.flushed();
-                debug!("<-- flush ino: {} fh: {}", ino, fh);
+                debug!("<-- flush ino: {:016x} fh: {}", ino, fh);
             }
 
             reply.ok();

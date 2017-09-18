@@ -4,6 +4,7 @@ extern crate log;
 extern crate libc;
 extern crate env_logger;
 extern crate fuse;
+extern crate time;
 extern crate xattr;
 
 use std::env;
@@ -15,6 +16,9 @@ use std::io::{Read, Write};
 use std::process::Command;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::FileExt;
+
+use env_logger::LogBuilder;
+use log::LogRecord;
 
 extern crate catfs;
 
@@ -84,7 +88,24 @@ impl<'a> CatFSTests<'a> {
 
 impl<'a> Fixture for CatFSTests<'a> {
     fn setup() -> error::Result<CatFSTests<'a>> {
-        let _ = env_logger::init();
+        let format = |record: &LogRecord| {
+            let t = time::now();
+            format!(
+                "{} {:5} - {}",
+                time::strftime("%Y-%m-%d %H:%M:%S", &t).unwrap(),
+                record.level(),
+                record.args()
+            )
+        };
+
+        let mut builder = LogBuilder::new();
+        builder.format(format);
+
+        if env::var("RUST_LOG").is_ok() {
+            builder.parse(&env::var("RUST_LOG").unwrap());
+        }
+
+        let _ = builder.init();
 
         let _ = fs::create_dir(CatFSTests::get_orig_dir().join("dir2"));
 

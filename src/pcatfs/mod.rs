@@ -9,18 +9,17 @@ use self::time::Timespec;
 
 use std::ffi::OsStr;
 use std::ops::Deref;
-use std::sync::Mutex;
 
 use catfs::CatFS;
 
 pub struct PCatFS {
-    tp: Mutex<ThreadPool>,
+    tp: ThreadPool,
     fs: CatFS,
 }
 
 impl Drop for PCatFS {
     fn drop(&mut self) {
-        self.tp.lock().unwrap().join();
+        self.tp.join();
     }
 }
 
@@ -31,7 +30,7 @@ pub fn make_self<T>(s: &mut T) -> &'static mut T {
 impl PCatFS {
     pub fn new(fs: CatFS) -> PCatFS {
         PCatFS {
-            tp: Mutex::new(ThreadPool::new(100)),
+            tp: ThreadPool::new(100),
             fs: fs,
         }
     }
@@ -51,8 +50,11 @@ macro_rules! run_in_threadpool {
             fn $name(&mut self, _req: &Request, parent: u64, name: &OsStr, $($arg : $argtype),*) {
                 let mut s = make_self(self);
                 let name = name.to_os_string();
-                self.tp.lock().unwrap().execute(
-                    move || s.fs.$name(parent, name, $($arg),*),
+                self.tp.execute(
+                    move || {
+                        s.fs.$name(parent, name, $($arg),*);
+                        debug!("queue size is {}", s.tp.queued_count());
+                    }
                 );
             }
         )*
@@ -61,8 +63,11 @@ macro_rules! run_in_threadpool {
         $(
             fn $name(&mut self, _req: &Request, $($arg : $argtype),*) {
                 let mut s = make_self(self);
-                self.tp.lock().unwrap().execute(
-                    move || s.fs.$name($($arg),*),
+                self.tp.execute(
+                    move || {
+                        s.fs.$name($($arg),*);
+                        debug!("queue size is {}", s.tp.queued_count());
+                    }
                 );
             }
         )*
@@ -82,7 +87,7 @@ impl Filesystem for PCatFS {
     ) {
         let mut s = make_self(self);
         let data = data.to_vec();
-        self.tp.lock().unwrap().execute(move || {
+        self.tp.execute(move || {
             s.fs.write(ino, fh, offset, data, _flags, reply);
         });
     }
@@ -100,7 +105,7 @@ impl Filesystem for PCatFS {
         let mut s = make_self(self);
         let name = name.to_os_string();
         let newname = newname.to_os_string();
-        self.tp.lock().unwrap().execute(move || {
+        self.tp.execute(move || {
             s.fs.rename(parent, name, newparent, newname, reply);
         });
     }
