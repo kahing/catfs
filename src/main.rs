@@ -15,6 +15,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::io;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use chan_signal::Signal;
@@ -170,11 +171,15 @@ fn main_internal() -> error::Result<()> {
 
     {
         let mut session = fuse::Session::new(fs, Path::new(&flags.mount_point), &options)?;
+        let need_unmount = Arc::new(Mutex::new(true));
+        let need_unmount2 = need_unmount.clone();
         thread::spawn(move || {
             if let Err(e) = session.run() {
                 error!("session.run() = {}", e);
             }
             info!("{:?} unmounted", session.mountpoint());
+            let mut need_unmount = need_unmount2.lock().unwrap();
+            *need_unmount = false;
             unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
         });
 
@@ -187,7 +192,10 @@ fn main_internal() -> error::Result<()> {
             s,
             flags.mount_point
         );
-        unmount(Path::new(&flags.mount_point))?;
+        let need_unmount = need_unmount.lock().unwrap();
+        if *need_unmount {
+            unmount(Path::new(&flags.mount_point))?;
+        }
     }
     rlibc::close(cache_dir)?;
     return Ok(());
@@ -230,7 +238,7 @@ pub fn unmount(mountpoint: &Path) -> io::Result<()> {
         }
     }
 
-    let mnt = try!(CString::new(mountpoint.as_os_str().as_bytes()));
+    let mnt = CString::new(mountpoint.as_os_str().as_bytes())?;
     let rc = libc_umount(&mnt);
     if rc < 0 {
         Err(io::Error::last_os_error())
