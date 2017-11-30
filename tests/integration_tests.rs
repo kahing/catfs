@@ -248,7 +248,8 @@ unit_tests!{
         let mut total = 0;
         for entry in fs::read_dir(dir2).unwrap() {
             i += 1;
-            total += entry.unwrap().file_name().to_str().unwrap().parse().unwrap();
+            let num: u32 = entry.unwrap().file_name().to_str().unwrap().parse().unwrap();
+            total += num;
         }
         assert_eq!(i, 1000);
         assert_eq!(total, (1000 * (1000 + 1)) / 2);

@@ -32,7 +32,7 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
             if let Some(v) = f.value.downcast_mut::<bool>() {
                 *v = true;
             }
-            if let Some(mut v) = f.value.downcast_mut::<Vec<OsString>>() {
+            if let Some(v) = f.value.downcast_mut::<Vec<OsString>>() {
                 let options = matches.values_of(name).unwrap();
                 for s in options {
                     v.push(OsString::from("-o"));

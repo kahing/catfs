@@ -486,7 +486,7 @@ impl CatFS {
 
     pub fn readdir(&mut self, _ino: u64, dh: u64, offset: u64, mut reply: ReplyDirectory) {
         let mut dh_store = self.dh_store.lock().unwrap();
-        let mut dir = dh_store.handles.get_mut(&dh).unwrap();
+        let dir = dh_store.handles.get_mut(&dh).unwrap();
         dir.seekdir(offset);
         loop {
             match dir.readdir() {
