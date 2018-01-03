@@ -110,6 +110,10 @@ impl Filesystem for PCatFS {
         });
     }
 
+    fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {
+        self.fs.forget(ino, nlookup);
+    }
+
     run_in_threadpool!{
         fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         }
@@ -131,9 +135,6 @@ impl Filesystem for PCatFS {
             flags: Option<u32>,
             reply: ReplyAttr,
         ) {
-        }
-
-        fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {
         }
 
         fn opendir(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
