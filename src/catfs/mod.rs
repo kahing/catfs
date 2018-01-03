@@ -4,7 +4,7 @@ extern crate threadpool;
 extern crate time;
 
 use self::fuse::{ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty, ReplyDirectory, ReplyData,
-                 ReplyWrite, ReplyCreate};
+                 ReplyWrite, ReplyCreate, ReplyStatfs};
 
 use self::time::{Duration, Timespec};
 
@@ -186,6 +186,24 @@ impl CatFS {
 
     fn ttl_now(&self) -> time::Timespec {
         return time::get_time() + self.ttl;
+    }
+
+    pub fn statfs(&mut self, _ino: u64, reply: ReplyStatfs) {
+        match rlibc::fstatvfs(self.cache_dir) {
+            Ok(st) => {
+                reply.statfs(
+                    st.f_blocks,
+                    st.f_bfree,
+                    st.f_bavail,
+                    st.f_files,
+                    st.f_ffree,
+                    st.f_bsize as u32,
+                    st.f_namemax as u32,
+                    st.f_frsize as u32,
+                )
+            }
+            Err(e) => reply.error(e.raw_os_error().unwrap()),
+        }
     }
 
     pub fn lookup(&mut self, parent: u64, name: OsString, reply: ReplyEntry) {

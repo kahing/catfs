@@ -3,7 +3,7 @@ extern crate threadpool;
 extern crate time;
 
 use self::fuse::{Filesystem, Request, ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty,
-                 ReplyDirectory, ReplyData, ReplyWrite, ReplyCreate};
+                 ReplyDirectory, ReplyData, ReplyWrite, ReplyCreate, ReplyStatfs};
 use self::threadpool::ThreadPool;
 use self::time::Timespec;
 
@@ -179,6 +179,9 @@ impl Filesystem for PCatFS {
             _flush: bool,
             reply: ReplyEmpty,
         ) {
+        }
+
+        fn statfs(&mut self, _req: &Request, ino: u64, reply: ReplyStatfs) {
         }
     }
 
