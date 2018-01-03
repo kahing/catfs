@@ -211,11 +211,24 @@ impl CatFS {
         let mut old_inode: Option<Arc<RwLock<Inode>>> = None;
         let path: PathBuf;
         {
-            let mut store = self.store.lock().unwrap();
+            let store = self.store.lock().unwrap();
             parent_inode = store.get(parent);
+        }
+
+        {
             let parent_inode = parent_inode.read().unwrap();
             path = parent_inode.get_child_name(&name);
-            if let Some(ref mut i) = store.get_mut_by_path(&path) {
+        }
+
+        {
+            let mut i: Option<Arc<RwLock<Inode>>>;
+
+            {
+                let mut store = self.store.lock().unwrap();
+                i = store.get_mut_by_path(&path);
+            }
+
+            if let Some(ref mut i) = i {
                 old_inode = Some(i.clone());
                 let mut inode = i.write().unwrap();
                 let refcnt = inode.inc_ref();
@@ -286,9 +299,14 @@ impl CatFS {
     }
 
     pub fn getattr(&mut self, ino: u64, reply: ReplyAttr) {
-        let store = self.store.lock().unwrap();
+        let inode: Arc<RwLock<Inode>>;
+
         {
-            let inode = store.get(ino);
+            let store = self.store.lock().unwrap();
+            inode = store.get(ino);
+        }
+
+        {
             let inode = inode.read().unwrap();
             if !inode.was_flush_failed() {
                 reply.attr(&self.ttl_now(), inode.get_attr());
@@ -302,7 +320,6 @@ impl CatFS {
             }
         }
 
-        let inode = store.get(ino);
         let mut inode = inode.write().unwrap();
         if let Err(e) = inode.refresh() {
             debug!("<-- !getattr {:?} = {}", inode.get_path(), e);
@@ -468,24 +485,33 @@ impl CatFS {
     }
 
     pub fn forget(&mut self, ino: u64, nlookup: u64) {
-        let mut store = self.store.lock().unwrap();
+        let inode: Arc<RwLock<Inode>>;
         let stale: bool;
         {
-            let inode = store.get(ino);
+            let store = self.store.lock().unwrap();
+            inode = store.get(ino);
+        }
+
+        {
             let mut inode = inode.write().unwrap();
             stale = inode.deref(nlookup);
         }
+
         if stale {
             debug!("<-- forgot 0x{:016x}", ino);
+            let mut store = self.store.lock().unwrap();
             store.remove_ino(ino);
         }
     }
 
     pub fn opendir(&mut self, ino: u64, flags: u32, reply: ReplyOpen) {
-        let store = self.store.lock().unwrap();
-        let inode = store.get(ino);
-        let inode = inode.read().unwrap();
+        let inode: Arc<RwLock<Inode>>;
+        {
+            let store = self.store.lock().unwrap();
+            inode = store.get(ino);
+        }
 
+        let inode = inode.read().unwrap();
         match inode.opendir() {
             Ok(dir) => {
                 let mut dh_store = self.dh_store.lock().unwrap();
@@ -655,8 +681,12 @@ impl CatFS {
                             // the src filesystem rejected our write,
                             // maybe because this is random
                             // write. reopen the src and try again
-                            let store = self.store.lock().unwrap();
-                            let inode = store.get(ino);
+                            let inode: Arc<RwLock<Inode>>;
+
+                            {
+                                let store = self.store.lock().unwrap();
+                                inode = store.get(ino);
+                            }
                             let inode = inode.read().unwrap();
 
                             if let Err(e2) = inode.reopen_src(&mut file) {
@@ -688,8 +718,11 @@ impl CatFS {
             }
         }
 
-        let store = self.store.lock().unwrap();
-        let inode = store.get(ino);
+        let inode: Arc<RwLock<Inode>>;
+        {
+            let store = self.store.lock().unwrap();
+            inode = store.get(ino);
+        }
         let mut inode = inode.write().unwrap();
         inode.extend(offset + (nwritten as u64));
         reply.written(nwritten as u32);
@@ -840,17 +873,24 @@ impl CatFS {
         let inode: Arc<RwLock<Inode>>;
         let path: PathBuf;
         let new_path: PathBuf;
+        let parent_inode: Arc<RwLock<Inode>>;
+        let new_parent_inode: Arc<RwLock<Inode>>;
         {
-            let mut store = self.store.lock().unwrap();
-            let parent_inode = store.get(parent);
-            let new_parent_inode = store.get(newparent);
+            let store = self.store.lock().unwrap();
+            parent_inode = store.get(parent);
+            new_parent_inode = store.get(newparent);
+        }
 
+        {
             let parent_inode = parent_inode.read().unwrap();
             let new_parent_inode = new_parent_inode.read().unwrap();
 
             path = parent_inode.get_child_name(&name);
             new_path = new_parent_inode.get_child_name(&newname);
+        }
 
+        {
+            let mut store = self.store.lock().unwrap();
             match store.get_mut_by_path(&path) {
                 Some(i) => inode = i,
                 None => panic!("rename source not in inode cache: {:?}", path),
