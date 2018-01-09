@@ -70,9 +70,9 @@ pub fn closedir(dir: *mut libc::DIR) -> io::Result<()> {
     }
 }
 
-pub fn seekdir(dir: *mut libc::DIR, loc: u64) {
+pub fn seekdir(dir: *mut libc::DIR, loc: i64) {
     unsafe {
-        libc::seekdir(dir, loc as i64);
+        libc::seekdir(dir, loc);
     }
 }
 
@@ -116,8 +116,8 @@ impl Dirent {
     pub fn ino(&self) -> u64 {
         return self.en.d_ino;
     }
-    pub fn off(&self) -> u64 {
-        return self.en.d_off as u64;
+    pub fn off(&self) -> i64 {
+        return self.en.d_off;
     }
     pub fn kind(&self) -> fuse::FileType {
         match self.en.d_type {
@@ -464,9 +464,9 @@ impl File {
         }
     }
 
-    pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+    pub fn read_at(&self, buf: &mut [u8], offset: i64) -> io::Result<usize> {
         let nbytes =
-            unsafe { libc::pread(self.fd, as_mut_void_ptr(buf), buf.len(), offset as i64) };
+            unsafe { libc::pread(self.fd, as_mut_void_ptr(buf), buf.len(), offset) };
         if nbytes < 0 {
             return Err(io::Error::last_os_error());
         } else {
@@ -474,8 +474,8 @@ impl File {
         }
     }
 
-    pub fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
-        let nbytes = unsafe { libc::pwrite(self.fd, as_void_ptr(buf), buf.len(), offset as i64) };
+    pub fn write_at(&self, buf: &[u8], offset: i64) -> io::Result<usize> {
+        let nbytes = unsafe { libc::pwrite(self.fd, as_void_ptr(buf), buf.len(), offset) };
         if nbytes < 0 {
             return Err(io::Error::last_os_error());
         } else {
@@ -556,11 +556,11 @@ impl Drop for File {
 
 impl FileExt for File {
     fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-        File::read_at(self, buf, offset)
+        File::read_at(self, buf, offset as i64)
     }
 
     fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
-        File::write_at(self, buf, offset)
+        File::write_at(self, buf, offset as i64)
     }
 }
 

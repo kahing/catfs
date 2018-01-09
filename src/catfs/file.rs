@@ -26,7 +26,7 @@ type CvData<T> = Arc<(Mutex<T>, Condvar)>;
 
 #[derive(Default)]
 struct PageInInfo {
-    offset: u64,
+    offset: i64,
     dirty: bool,
     eof: bool,
     err: Option<RError<io::Error>>,
@@ -345,18 +345,18 @@ impl Handle {
         return Ok(false);
     }
 
-    pub fn read(&mut self, offset: u64, buf: &mut [u8]) -> error::Result<usize> {
+    pub fn read(&mut self, offset: i64, buf: &mut [u8]) -> error::Result<usize> {
         let nwant = buf.len();
         let mut bytes_read: usize = 0;
 
         if self.has_page_in_thread {
-            self.wait_for_offset(offset + buf.len() as u64, false)?;
+            self.wait_for_offset(offset + (buf.len() as i64), false)?;
         }
 
         while bytes_read < nwant {
             match self.cache_file.read_at(
                 &mut buf[bytes_read..],
-                offset + (bytes_read as u64),
+                offset + (bytes_read as i64),
             ) {
                 Ok(nread) => {
                     if nread == 0 {
@@ -398,7 +398,7 @@ impl Handle {
         return Ok(());
     }
 
-    pub fn write(&mut self, offset: u64, buf: &[u8]) -> error::Result<usize> {
+    pub fn write(&mut self, offset: i64, buf: &[u8]) -> error::Result<usize> {
         let nwant = buf.len();
         let mut bytes_written: usize = 0;
 
@@ -409,14 +409,14 @@ impl Handle {
         }
 
         if self.has_page_in_thread {
-            self.wait_for_offset(offset + buf.len() as u64, true)?;
+            self.wait_for_offset(offset + (buf.len() as i64), true)?;
         }
 
         while bytes_written < nwant {
             if !self.write_through_failed {
                 if let Err(e) = self.src_file.write_at(
                     &buf[bytes_written..],
-                    offset + (bytes_written as u64),
+                    offset + (bytes_written as i64),
                 )
                 {
                     if e.raw_os_error().unwrap() == libc::ENOTSUP {
@@ -434,7 +434,7 @@ impl Handle {
 
             match self.cache_file.write_at(
                 &buf[bytes_written..],
-                offset + (bytes_written as u64),
+                offset + (bytes_written as i64),
             ) {
                 Ok(nwritten) => {
                     bytes_written += nwritten;
@@ -516,7 +516,7 @@ impl Handle {
         }
     }
 
-    fn wait_for_offset(&mut self, offset: u64, set_dirty: bool) -> error::Result<()> {
+    fn wait_for_offset(&mut self, offset: i64, set_dirty: bool) -> error::Result<()> {
         let &(ref lock, ref cvar) = &*self.page_in_res;
 
         let mut page_in_res = lock.lock().unwrap();
@@ -540,7 +540,7 @@ impl Handle {
         }
     }
 
-    fn notify_offset(&self, res: error::Result<u64>, eof: bool) -> error::Result<()> {
+    fn notify_offset(&self, res: error::Result<i64>, eof: bool) -> error::Result<()> {
         let &(ref lock, ref cvar) = &*self.page_in_res;
 
         let mut page_in_res = lock.lock().unwrap();
@@ -599,16 +599,16 @@ impl Handle {
         return Ok(());
     }
 
-    fn copy_user(&self, rh: &File, wh: &File) -> error::Result<u64> {
+    fn copy_user(&self, rh: &File, wh: &File) -> error::Result<i64> {
         let mut buf = [0u8; 32 * 1024];
         let mut offset = 0;
         loop {
-            let nread = rh.read_at(&mut buf, offset as u64)?;
+            let nread = rh.read_at(&mut buf, offset)?;
             if nread == 0 {
                 break;
             }
-            wh.write_at(&buf[..nread], offset as u64)?;
-            offset += nread as u64;
+            wh.write_at(&buf[..nread], offset)?;
+            offset += nread as i64;
 
             self.notify_offset(Ok(offset), false)?;
         }
@@ -616,22 +616,22 @@ impl Handle {
         return Ok(offset);
     }
 
-    fn copy_splice(&self, rh: &File, wh: &File) -> error::Result<u64> {
+    fn copy_splice(&self, rh: &File, wh: &File) -> error::Result<i64> {
         let (pin, pout) = rlibc::pipe()?;
 
         let mut offset = 0;
         loop {
-            let nread = rlibc::splice(rh.as_raw_fd(), offset as i64, pout, -1, 128 * 1024)?;
+            let nread = rlibc::splice(rh.as_raw_fd(), offset, pout, -1, 128 * 1024)?;
             if nread == 0 {
                 break;
             }
 
             let mut written = 0;
             while written < nread {
-                let nxfer = rlibc::splice(pin, -1, wh.as_raw_fd(), offset as i64, 128 * 1024)?;
+                let nxfer = rlibc::splice(pin, -1, wh.as_raw_fd(), offset, 128 * 1024)?;
 
                 written += nxfer;
-                offset += nxfer as u64;
+                offset += nxfer as i64;
 
                 self.notify_offset(Ok(offset), false)?;
             }
@@ -663,7 +663,7 @@ impl Handle {
             wh.truncate(size)?;
         }
 
-        let offset: u64;
+        let offset: i64;
 
         if disable_splice {
             offset = self.copy_user(rh, wh)?;

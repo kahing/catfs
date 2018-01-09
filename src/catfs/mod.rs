@@ -528,7 +528,7 @@ impl CatFS {
         }
     }
 
-    pub fn readdir(&mut self, _ino: u64, dh: u64, offset: u64, mut reply: ReplyDirectory) {
+    pub fn readdir(&mut self, _ino: u64, dh: u64, offset: i64, mut reply: ReplyDirectory) {
         let mut dh_store = self.dh_store.lock().unwrap();
         let dir = dh_store.handles.get_mut(&dh).unwrap();
         dir.seekdir(offset);
@@ -592,7 +592,7 @@ impl CatFS {
         }
     }
 
-    pub fn read(&mut self, _ino: u64, fh: u64, offset: u64, size: u32, reply: ReplyData) {
+    pub fn read(&mut self, _ino: u64, fh: u64, offset: i64, size: u32, reply: ReplyData) {
         let file: Arc<Mutex<file::Handle>>;
         {
             let fh_store = self.fh_store.lock().unwrap();
@@ -658,7 +658,7 @@ impl CatFS {
         &mut self,
         ino: u64,
         fh: u64,
-        offset: u64,
+        offset: i64,
         data: Vec<u8>,
         _flags: u32,
         reply: ReplyWrite,
@@ -724,7 +724,7 @@ impl CatFS {
             inode = store.get(ino);
         }
         let mut inode = inode.write().unwrap();
-        inode.extend(offset + (nwritten as u64));
+        inode.extend((offset as u64) + (nwritten as u64));
         reply.written(nwritten as u32);
     }
 

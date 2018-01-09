@@ -10,7 +10,7 @@ use catfs::rlibc;
 
 pub struct Handle {
     dh: *mut libc::DIR,
-    offset: u64,
+    offset: i64,
     entry: rlibc::Dirent,
     entry_valid: bool,
 }
@@ -60,7 +60,7 @@ impl Handle {
         });
     }
 
-    pub fn seekdir(&mut self, offset: u64) {
+    pub fn seekdir(&mut self, offset: i64) {
         if offset != self.offset {
             debug!(
                 "seeking {} to {}",

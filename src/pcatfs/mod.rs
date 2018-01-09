@@ -80,7 +80,7 @@ impl Filesystem for PCatFS {
         _req: &Request,
         ino: u64,
         fh: u64,
-        offset: u64,
+        offset: i64,
         data: &[u8],
         _flags: u32,
         reply: ReplyWrite,
@@ -145,7 +145,7 @@ impl Filesystem for PCatFS {
             _req: &Request,
             _ino: u64,
             dh: u64,
-            offset: u64,
+            offset: i64,
             reply: ReplyDirectory,
         ) {
         }
@@ -161,7 +161,7 @@ impl Filesystem for PCatFS {
             _req: &Request,
             _ino: u64,
             fh: u64,
-            offset: u64,
+            offset: i64,
             size: u32,
             reply: ReplyData,
         ) {
