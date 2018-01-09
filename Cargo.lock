@@ -78,7 +78,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "catfs"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "backtrace 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "chan-signal 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
