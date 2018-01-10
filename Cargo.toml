@@ -12,7 +12,7 @@ readme = "README.md"
 [dependencies]
 backtrace = "0.3"
 chan-signal = "0.2"
-clap = "2.25.0"
+clap = "2.29.0"
 env_logger = "0.4"
 fuse = "0.3.0"
 generic-array = "0.8"
