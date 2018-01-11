@@ -35,8 +35,10 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
             if let Some(v) = f.value.downcast_mut::<Vec<OsString>>() {
                 let options = matches.values_of(name).unwrap();
                 for s in options {
-                    v.push(OsString::from("-o"));
-                    v.push(OsString::from(s));
+                    for s in s.split(',') {
+                        v.push(OsString::from("-o"));
+                        v.push(OsString::from(s));
+                    }
                 }
             }
             if let Some(v) = f.value.downcast_mut::<DiskSpace>() {
