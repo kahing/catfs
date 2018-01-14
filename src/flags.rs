@@ -1,6 +1,7 @@
 extern crate clap;
 
 use std::any::Any;
+use std::env;
 use std::ffi::OsString;
 
 use catfs::flags::DiskSpace;
@@ -14,7 +15,39 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
     for f in flags.iter() {
         app = app.arg(f.arg.clone());
     }
-    let matches = app.get_matches();
+    let mut argv = env::args_os().collect::<Vec<OsString>>();
+    if argv.len() == 5 && argv[3] == OsString::from("-o") {
+	// looks like it's coming from fstab!
+        // [0]: catfs, [1] = src_dir#cache_dir, [2] = mnt
+        // [3]: -o, [4] = opt1,opt2
+        // XXX str has split but OsString doesn't
+
+        // XXX2 this is more convoluted than necessary because paths
+        // immutably borrows from argv and we can't modify elements of
+        // argv again because that requires another mutable borrow
+
+        // XXX3 need to initialize src/cache because the compiler is
+        // not smart enough
+        let mut src: OsString = Default::default();
+        let mut cache: OsString = Default::default();
+        let mut is_fstab = false;
+
+        {
+            let paths = argv[1].to_str().unwrap().splitn(2, '#').collect::<Vec<&str>>();
+            if paths.len() == 2 {
+                src = OsString::from(paths[0]);
+                cache = OsString::from(paths[1]);
+                is_fstab = true;
+            }
+        }
+
+        if is_fstab {
+            argv[1] = src;
+            argv.insert(2, cache);
+        }
+    }
+
+    let matches = app.get_matches_from(argv);
 
     for f in flags.iter_mut() {
         let name = f.arg.b.name;
