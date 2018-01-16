@@ -1,4 +1,5 @@
 extern crate clap;
+extern crate libc;
 
 use std::any::Any;
 use std::env;
@@ -53,17 +54,22 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
         let name = f.arg.b.name;
 
         if matches.is_present(name) {
-            // cannot use else if here or rust would claim double mutable borrow
+            // cannot use else if here or rust would claim double
+            // mutable borrow because apparently a borrow sends with
+            // the last else if
             if let Some(v) = f.value.downcast_mut::<String>() {
                 let s = matches.value_of(name).unwrap();
                 *v = String::from(s);
+                continue;
             }
             if let Some(v) = f.value.downcast_mut::<OsString>() {
                 let s = matches.value_of_os(name).unwrap();
                 *v = s.to_os_string();
+                continue;
             }
             if let Some(v) = f.value.downcast_mut::<bool>() {
                 *v = true;
+                continue;
             }
             if let Some(v) = f.value.downcast_mut::<Vec<OsString>>() {
                 let options = matches.values_of(name).unwrap();
@@ -73,11 +79,25 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
                         v.push(OsString::from(s));
                     }
                 }
+                continue;
             }
             if let Some(v) = f.value.downcast_mut::<DiskSpace>() {
                 let s = matches.value_of(name).unwrap();
                 *v = s.parse().unwrap();
+                continue;
             }
+            if let Some(v) = f.value.downcast_mut::<libc::uid_t>() {
+                let s = matches.value_of(name).unwrap();
+                *v = s.parse().unwrap();
+                continue;
+            }
+            if let Some(v) = f.value.downcast_mut::<libc::gid_t>() {
+                let s = matches.value_of(name).unwrap();
+                *v = s.parse().unwrap();
+                continue;
+            }
+
+            panic!("unknown type for {}", name);
         }
     }
 }
