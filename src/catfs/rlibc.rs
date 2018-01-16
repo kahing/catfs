@@ -42,6 +42,26 @@ pub fn to_cstring(path: &AsRef<Path>) -> CString {
     return CString::new(bytes).unwrap();
 }
 
+macro_rules! libc_wrap {
+    ($( pub fn $name:ident($($arg:ident : $argtype:ty),*) $body:block )*) => (
+        $(
+            pub fn $name($($arg : $argtype),*) -> io::Result<()> {
+                let err: libc::c_int;
+                unsafe { err = libc::$name($($arg),*) }
+                match err {
+                    0 => return Ok(()),
+                    _ => return Err(io::Error::last_os_error()),
+                }
+            }
+        )*
+    );
+}
+
+libc_wrap!{
+    pub fn setuid(uid: libc::uid_t) {}
+    pub fn setgid(gid: libc::gid_t) {}
+}
+
 pub fn opendir(path: &AsRef<Path>) -> io::Result<*mut libc::DIR> {
     let s = to_cstring(path);
     let dh = unsafe { libc::opendir(s.as_ptr()) };

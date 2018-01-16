@@ -138,6 +138,20 @@ fn main_internal() -> error::Result<()> {
                 ),
                 value: &mut flags.foreground,
             },
+            flags::Flag{
+                arg: Arg::with_name("uid")
+                    .long("uid")
+                    .takes_value(true)
+                    .help("Run as this uid"),
+                value: &mut flags.uid,
+            },
+            flags::Flag{
+                arg: Arg::with_name("gid")
+                    .long("gid")
+                    .takes_value(true)
+                    .help("Run as this gid"),
+                value: &mut flags.gid,
+            },
             flags::Flag {
                 arg: Arg::with_name("option")
                     .short("o")
@@ -184,6 +198,13 @@ fn main_internal() -> error::Result<()> {
 
     if test {
         return Ok(());
+    }
+
+    if flags.uid != 0 {
+        rlibc::setuid(flags.uid)?;
+    }
+    if flags.gid != 0 {
+        rlibc::setgid(flags.gid)?;
     }
 
     if !flags.foreground {

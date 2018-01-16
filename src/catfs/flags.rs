@@ -1,3 +1,5 @@
+extern crate libc;
+
 use std::error::Error;
 use std::ffi::OsString;
 use std::num::{ParseFloatError, ParseIntError};
@@ -71,6 +73,8 @@ pub struct FlagStorage {
     pub mount_options: Vec<OsString>,
     pub foreground: bool,
     pub free_space: DiskSpace,
+    pub uid: libc::uid_t,
+    pub gid: libc::gid_t,
 }
 
 #[cfg(test)]
