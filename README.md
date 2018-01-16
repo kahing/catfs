@@ -45,7 +45,7 @@ how much free space `<to>`'s filesystem has.
 
 To mount catfs on startup, add this to `/etc/fstab`:
 
-```ShellSession
+```
 catfs#/src/dir#/cache/dir /mnt/point    fuse    allow_other,--uid=1001,--gid=1001,--free=1%   0       0
 ```
 
