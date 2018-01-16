@@ -200,17 +200,16 @@ fn main_internal() -> error::Result<()> {
         return Ok(());
     }
 
-    if flags.uid != 0 {
-        rlibc::setuid(flags.uid)?;
-    }
     if flags.gid != 0 {
         rlibc::setgid(flags.gid)?;
+    }
+    if flags.uid != 0 {
+        rlibc::setuid(flags.uid)?;
     }
 
     if !flags.foreground {
         let daemonize = Daemonize::new()
             .working_directory(env::current_dir()?.as_path())
-            .umask(0o777)    // Set umask, `0o027` by default.
             ;
 
         match daemonize.start() {

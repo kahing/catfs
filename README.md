@@ -43,6 +43,12 @@ Catfs will expose files in `<from>` under `<mountpoint>`, and cache
 them to `<to>` as they are accessed. You can use `--free` to control
 how much free space `<to>`'s filesystem has.
 
+To mount catfs on startup, add this to `/etc/fstab`:
+
+```ShellSession
+catfs#/src/dir#/cache/dir /mnt/point    fuse    allow_other,--uid=1001,--gid=1001,--free=1%   0       0
+```
+
 # Benchmark
 
 Compare using catfs to cache sshfs vs sshfs only. Topology is
