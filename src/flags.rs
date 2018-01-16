@@ -45,6 +45,30 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
         if is_fstab {
             argv[1] = src;
             argv.insert(2, cache);
+            let mut options = String::new();
+            let mut arguments: Vec<OsString> = Default::default();
+
+            // options are now pushed down
+            for opt in argv[5].to_str().unwrap().split(',') {
+                if opt.starts_with("-") {
+                    arguments.push(OsString::from(opt));
+                } else {
+                    options += opt;
+                    options += ",";
+                }
+            }
+
+            if options.len() != 0 {
+                options.pop();
+                argv[5] = OsString::from(options);
+            } else {
+                // no options, pop -o and empty string
+                argv.pop();
+                argv.pop();
+            }
+            for arg in arguments {
+                argv.insert(3, arg);
+            }
         }
     }
 
