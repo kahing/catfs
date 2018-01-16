@@ -63,14 +63,18 @@ fn main_internal() -> error::Result<()> {
         } else {
             unsafe {
                 if let Some(ref logger) = SYSLOGGER {
-                    // ignore error if we can't log, not much we can do anyway
-                    let _ = logger.send_3164(match record.level() {
+                    let level = match record.level() {
                         log::LogLevel::Trace => Severity::LOG_DEBUG,
                         log::LogLevel::Debug => Severity::LOG_DEBUG,
                         log::LogLevel::Info => Severity::LOG_INFO,
                         log::LogLevel::Warn => Severity::LOG_WARNING,
                         log::LogLevel::Error => Severity::LOG_ERR,
-                    }, record.args());
+                    };
+                    let msg = format!("{}", record.args());
+                    for line in msg.split('\n') {
+                        // ignore error if we can't log, not much we can do anyway
+                        let _ = logger.send_3164(level, line);
+                    }
                 }
             }
             format!("\u{08}")
