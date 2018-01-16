@@ -1,11 +1,13 @@
 extern crate chan_signal;
 #[macro_use]
 extern crate clap;
+extern crate daemonize;
 extern crate env_logger;
 extern crate fuse;
 extern crate libc;
 #[macro_use]
 extern crate log;
+extern crate syslog;
 extern crate time;
 
 use std::env;
@@ -20,8 +22,10 @@ use std::thread;
 
 use chan_signal::Signal;
 use clap::{App, Arg};
+use daemonize::{Daemonize};
 use env_logger::LogBuilder;
 use log::LogRecord;
+use syslog::{Facility,Severity};
 
 mod pcatfs;
 mod catfs;
@@ -39,15 +43,38 @@ fn main() {
     }
 }
 
+static mut SYSLOG: bool = false;
+static mut SYSLOGGER: Option<Box<syslog::Logger>> = None;
+
 fn main_internal() -> error::Result<()> {
     let format = |record: &LogRecord| {
         let t = time::now();
-        format!(
-            "{} {:5} - {}",
-            time::strftime("%Y-%m-%d %H:%M:%S", &t).unwrap(),
-            record.level(),
-            record.args()
-        )
+        let syslog: bool;
+        unsafe {
+            syslog = SYSLOG;
+        }
+        if !syslog {
+            format!(
+                "{} {:5} - {}",
+                time::strftime("%Y-%m-%d %H:%M:%S", &t).unwrap(),
+                record.level(),
+                record.args()
+            )
+        } else {
+            unsafe {
+                if let Some(ref logger) = SYSLOGGER {
+                    // ignore error if we can't log, not much we can do anyway
+                    let _ = logger.send_3164(match record.level() {
+                        log::LogLevel::Trace => Severity::LOG_DEBUG,
+                        log::LogLevel::Debug => Severity::LOG_DEBUG,
+                        log::LogLevel::Info => Severity::LOG_INFO,
+                        log::LogLevel::Warn => Severity::LOG_WARNING,
+                        log::LogLevel::Error => Severity::LOG_ERR,
+                    }, record.args());
+                }
+            }
+            format!("\u{08}")
+        }
     };
 
     let mut builder = LogBuilder::new();
@@ -55,6 +82,9 @@ fn main_internal() -> error::Result<()> {
 
     if env::var("RUST_LOG").is_ok() {
         builder.parse(&env::var("RUST_LOG").unwrap());
+    } else {
+        // default to info
+        builder.parse("info");
     }
 
     builder.init().unwrap();
@@ -154,6 +184,27 @@ fn main_internal() -> error::Result<()> {
 
     if test {
         return Ok(());
+    }
+
+    if !flags.foreground {
+        let daemonize = Daemonize::new()
+            .working_directory(env::current_dir()?.as_path())
+            .umask(0o777)    // Set umask, `0o027` by default.
+            ;
+
+        match daemonize.start() {
+            Ok(_) => {
+                if let Ok(mut logger) = syslog::unix(Facility::LOG_USER) {
+                    unsafe {
+                        logger.set_process_name("catfs".to_string());
+                        logger.set_process_id(libc::getpid());
+                        SYSLOGGER = Some(logger);
+                        SYSLOG = true;
+                    }
+                }
+            },
+            Err(e) => error!("unable to daemonize: {}", e),
+        }
     }
 
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
