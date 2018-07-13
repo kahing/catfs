@@ -193,13 +193,42 @@ pub fn mkdirat(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
     }
 }
 
-pub fn pipe() -> io::Result<(libc::c_int, libc::c_int)> {
+pub struct PipeFds {
+    pub pin: RawFd,
+    pub pout: RawFd,
+}
+
+impl PipeFds {
+    pub fn close(&mut self) -> io::Result<()> {
+        if self.pin == -1 {
+            return Ok(());
+        }
+
+        let rin = close(self.pin);
+        let rout = close(self.pout);
+        self.pin = -1;
+        self.pout = -1;
+
+        match rin {
+            Err(e) => Err(e),
+            Ok(()) => rout,
+        }
+    }
+}
+
+impl Drop for PipeFds {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
+pub fn pipe() -> io::Result<PipeFds> {
     let mut p = [0; 2];
     let res = unsafe { libc::pipe2(p.as_mut_ptr(), libc::O_CLOEXEC) };
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {
-        return Ok((p[0], p[1]));
+        return Ok(PipeFds { pin: p[0], pout: p[1] });
     }
 }
 

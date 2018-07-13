@@ -617,18 +617,18 @@ impl Handle {
     }
 
     fn copy_splice(&self, rh: &File, wh: &File) -> error::Result<i64> {
-        let (pin, pout) = rlibc::pipe()?;
+        let mut pipefds = rlibc::pipe()?;
 
         let mut offset = 0;
         loop {
-            let nread = rlibc::splice(rh.as_raw_fd(), offset, pout, -1, 128 * 1024)?;
+            let nread = rlibc::splice(rh.as_raw_fd(), offset, pipefds.pout, -1, 128 * 1024)?;
             if nread == 0 {
                 break;
             }
 
             let mut written = 0;
             while written < nread {
-                let nxfer = rlibc::splice(pin, -1, wh.as_raw_fd(), offset, 128 * 1024)?;
+                let nxfer = rlibc::splice(pipefds.pin, -1, wh.as_raw_fd(), offset, 128 * 1024)?;
 
                 written += nxfer;
                 offset += nxfer as i64;
@@ -637,12 +637,7 @@ impl Handle {
             }
         }
 
-        if let Err(e) = rlibc::close(pin) {
-            rlibc::close(pout)?;
-            return Err(RError::from(e));
-        } else {
-            rlibc::close(pout)?;
-        }
+        pipefds.close()?;
 
         return Ok(offset);
     }
