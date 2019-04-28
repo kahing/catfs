@@ -36,6 +36,8 @@ pub struct Inode {
 }
 
 fn to_filetype(t: u32) -> fuse::FileType {
+    #[cfg(target_os = "macos")]
+    let t = t as u16;
     match t & libc::S_IFMT {
         libc::S_IFLNK => fuse::FileType::Symlink,
         libc::S_IFREG => fuse::FileType::RegularFile,
@@ -128,7 +130,7 @@ impl Inode {
                 sec: st.st_ctime,
                 nsec: st.st_ctime_nsec as i32,
             },
-            kind: to_filetype(st.st_mode),
+            kind: to_filetype(st.st_mode as u32),
             perm: (st.st_mode & !libc::S_IFMT) as u16,
             nlink: st.st_nlink as u32,
             uid: st.st_uid,

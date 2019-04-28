@@ -192,11 +192,11 @@ impl CatFS {
         match rlibc::fstatvfs(self.cache_dir) {
             Ok(st) => {
                 reply.statfs(
-                    st.f_blocks,
-                    st.f_bfree,
-                    st.f_bavail,
-                    st.f_files,
-                    st.f_ffree,
+                    st.f_blocks.into(),
+                    st.f_bfree.into(),
+                    st.f_bavail.into(),
+                    st.f_files.into(),
+                    st.f_ffree.into(),
                     st.f_bsize as u32,
                     st.f_namemax as u32,
                     st.f_frsize as u32,

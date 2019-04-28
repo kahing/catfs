@@ -595,7 +595,7 @@ impl Handle {
             }
         }
 
-        self.src_file = File::openat(dir, path, flags, mode)?;
+        self.src_file = File::openat(dir, path, flags, mode.into())?;
         return Ok(());
     }
 
@@ -616,6 +616,7 @@ impl Handle {
         return Ok(offset);
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn copy_splice(&self, rh: &File, wh: &File) -> error::Result<i64> {
         let (pin, pout) = rlibc::pipe()?;
 
@@ -646,6 +647,12 @@ impl Handle {
 
         return Ok(offset);
     }
+
+    #[cfg(target_os = "macos")]
+    fn copy_splice(&self, rh: &File, wh: &File) -> error::Result<i64> {
+        self.copy_user(rh, wh)
+    }
+
 
     fn copy(&self, to_cache: bool, disable_splice: bool) -> error::Result<()> {
         let rh: &File;

@@ -9,6 +9,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::io;
 use std::mem;
 use std::path::Path;
+#[cfg(not(target_os = "macos"))]
 use std::ptr;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
@@ -102,6 +103,7 @@ pub struct Dirent {
 }
 
 impl Default for Dirent {
+    #[cfg(not(target_os = "macos"))]
     fn default() -> Dirent {
         return Dirent {
             en: libc::dirent {
@@ -110,6 +112,19 @@ impl Default for Dirent {
                 d_reclen: 0,
                 d_type: libc::DT_REG,
                 d_name: [0i8; 256], // FIXME: don't hardcode 256
+            },
+        };
+    }
+    #[cfg(target_os = "macos")]
+    fn default() -> Dirent {
+        return Dirent {
+            en: libc::dirent {
+                d_ino: 0,
+                d_seekoff: 0,
+                d_reclen: 0,
+                d_type: libc::DT_REG,
+                d_name: [0i8; 1024], // FIXME: don't hardcode 1024
+                d_namlen: 0,
             },
         };
     }
@@ -137,7 +152,10 @@ impl Dirent {
         return self.en.d_ino;
     }
     pub fn off(&self) -> i64 {
+        #[cfg(not(target_os = "macos"))]
         return self.en.d_off;
+        #[cfg(target_os = "macos")]
+        return self.en.d_seekoff as i64;
     }
     pub fn kind(&self) -> fuse::FileType {
         match self.en.d_type {
@@ -175,6 +193,9 @@ pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<Dirent>> {
 
 pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
     let s = to_cstring(path);
+    #[cfg(target_os = "macos")]
+    let mode = mode as u16;
+
     let res = unsafe { libc::mkdir(s.as_ptr(), mode) };
     if res < 0 {
         return Err(io::Error::last_os_error());
@@ -185,6 +206,9 @@ pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
 
 pub fn mkdirat(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
     let s = to_cstring(path);
+    #[cfg(target_os = "macos")]
+    let mode = mode as u16;
+
     let res = unsafe { libc::mkdirat(dir, s.as_ptr(), mode) };
     if res < 0 {
         return Err(io::Error::last_os_error());
@@ -193,6 +217,7 @@ pub fn mkdirat(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn pipe() -> io::Result<(libc::c_int, libc::c_int)> {
     let mut p = [0; 2];
     let res = unsafe { libc::pipe2(p.as_mut_ptr(), libc::O_CLOEXEC) };
@@ -203,6 +228,7 @@ pub fn pipe() -> io::Result<(libc::c_int, libc::c_int)> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn splice(
     fd: libc::c_int,
     off_self: i64,
@@ -296,7 +322,10 @@ pub fn fstatat(dir: RawFd, path: &AsRef<Path>) -> io::Result<libc::stat> {
     let stp = (&mut st) as *mut libc::stat;
     let s = to_cstring(path);
 
+    #[cfg(not(target_os = "macos"))]
     let res = unsafe { libc::fstatat(dir, s.as_ptr(), stp, libc::AT_EMPTY_PATH) };
+    #[cfg(target_os = "macos")]
+    let res = unsafe { libc::fstatat(dir, s.as_ptr(), stp, 0) };
 
     if res < 0 {
         return Err(io::Error::last_os_error());
@@ -369,6 +398,9 @@ pub fn utimensat(
 
 pub fn fchmodat(dir: RawFd, path: &AsRef<Path>, mode: u32, flags: u32) -> io::Result<()> {
     let s = to_cstring(path);
+    #[cfg(target_os = "macos")]
+    let mode = mode as u16;
+
     let res = unsafe { libc::fchmodat(dir, s.as_ptr(), mode, flags as i32) };
     if res == 0 {
         return Ok(());
@@ -451,6 +483,7 @@ impl File {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn allocate(&self, offset: u64, len: usize) -> io::Result<()> {
         let res = unsafe { libc::posix_fallocate(self.fd, offset as i64, len as i64) };
         if res == 0 {
@@ -458,6 +491,11 @@ impl File {
         } else {
             return Err(io::Error::from_raw_os_error(res));
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn allocate(&self, offset: u64, len: usize) -> io::Result<()> {
+        self.truncate((offset as usize)+ len)
     }
 
     #[allow(dead_code)]
@@ -476,6 +514,9 @@ impl File {
     }
 
     pub fn chmod(&self, mode: u32) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        let mode = mode as u16;
+
         let res = unsafe { libc::fchmod(self.fd, mode) };
         if res == 0 {
             return Ok(());

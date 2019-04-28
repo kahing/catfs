@@ -100,12 +100,16 @@ impl Hasher for IdentU64Hasher {
 
 // in blocks
 fn to_evict(spec: &DiskSpace, st: &libc::statvfs) -> u64 {
+    let f_frsize = st.f_frsize;
+    #[cfg(target_os = "macos")]
+    let f_frsize = f_frsize as u32;
+
     let desired = match *spec {
-        DiskSpace::Percent(p) => ((st.f_blocks * st.f_frsize) as f64 * p / 100.0) as u64,
+        DiskSpace::Percent(p) => ((st.f_blocks * f_frsize) as f64 * p / 100.0) as u64,
         DiskSpace::Bytes(b) => b,
     } as i64;
 
-    let x = desired - (st.f_bfree * st.f_frsize) as i64;
+    let x = desired - (st.f_bfree * f_frsize) as i64;
     return if x > 0 { x as u64 } else { 0 };
 }
 
