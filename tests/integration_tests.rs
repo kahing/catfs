@@ -228,7 +228,7 @@ unit_tests!{
         of.push(f.mnt.join("foo"));
         let status = Command::new("dd")
             .arg("if=/dev/zero").arg(of)
-            .arg("bs=1M").arg("count=10")
+            .arg("bs=1048576").arg("count=10")
             .stderr(Stdio::null())
             .status().expect("failed to execute `dd'");
         assert!(status.success());

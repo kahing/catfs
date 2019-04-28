@@ -9,6 +9,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::io;
 use std::mem;
 use std::path::Path;
+#[cfg(not(target_os = "macos"))]
 use std::ptr;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
@@ -17,6 +18,11 @@ use std::os::unix::fs::FileExt;
 use self::fuse::FileType;
 use self::time::Timespec;
 use self::xattr::FileExt as XattrFileExt;
+
+#[cfg(not(target_os = "macos"))]
+use self::libc::{fstat64, fstatvfs64, ftruncate64, open64, openat64, pread64, pwrite64, stat64, statvfs64};
+#[cfg(target_os = "macos")]
+use self::libc::{fstat as fstat64, fstatvfs as fstatvfs64, ftruncate as ftruncate64, open as open64, openat as openat64, pread as pread64, pwrite as pwrite64, stat as stat64, statvfs as statvfs64};
 
 use catfs::error;
 use catfs::error::RError;
@@ -102,6 +108,7 @@ pub struct Dirent {
 }
 
 impl Default for Dirent {
+    #[cfg(not(target_os = "macos"))]
     fn default() -> Dirent {
         return Dirent {
             en: libc::dirent {
@@ -110,6 +117,19 @@ impl Default for Dirent {
                 d_reclen: 0,
                 d_type: libc::DT_REG,
                 d_name: [0i8 as libc::c_char; 256], // FIXME: don't hardcode 256
+            },
+        };
+    }
+    #[cfg(target_os = "macos")]
+    fn default() -> Dirent {
+        return Dirent {
+            en: libc::dirent {
+                d_ino: 0,
+                d_seekoff: 0,
+                d_reclen: 0,
+                d_type: libc::DT_REG,
+                d_name: [0i8; 1024], // FIXME: don't hardcode 1024
+                d_namlen: 0,
             },
         };
     }
@@ -137,7 +157,10 @@ impl Dirent {
         return self.en.d_ino as u64;
     }
     pub fn off(&self) -> i64 {
+        #[cfg(not(target_os = "macos"))]
         return self.en.d_off as i64;
+        #[cfg(target_os = "macos")]
+        return self.en.d_seekoff as i64;
     }
     pub fn kind(&self) -> fuse::FileType {
         match self.en.d_type {
@@ -193,6 +216,7 @@ pub fn mkdirat(dir: RawFd, path: &dyn AsRef<Path>, mode: libc::mode_t) -> io::Re
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn pipe() -> io::Result<(libc::c_int, libc::c_int)> {
     let mut p = [0; 2];
     let res = unsafe { libc::pipe2(p.as_mut_ptr(), libc::O_CLOEXEC) };
@@ -203,6 +227,7 @@ pub fn pipe() -> io::Result<(libc::c_int, libc::c_int)> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn splice(
     fd: libc::c_int,
     off_self: i64,
@@ -280,10 +305,10 @@ pub fn renameat(dir: RawFd, path: &dyn AsRef<Path>, newpath: &dyn AsRef<Path>) -
     }
 }
 
-pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat64> {
-    let mut st: libc::stat64 = unsafe { mem::zeroed() };
+pub fn fstat(fd: libc::c_int) -> io::Result<stat64> {
+    let mut st: stat64 = unsafe { mem::zeroed() };
 
-    let res = unsafe { libc::fstat64(fd, (&mut st) as *mut libc::stat64) };
+    let res = unsafe { fstat64(fd, (&mut st) as *mut stat64) };
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {
@@ -291,12 +316,15 @@ pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat64> {
     }
 }
 
-pub fn fstatat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<libc::stat64> {
-    let mut st: libc::stat64 = unsafe { mem::zeroed() };
-    let stp = (&mut st) as *mut libc::stat64;
+pub fn fstatat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<stat64> {
+    let mut st: stat64 = unsafe { mem::zeroed() };
+    let stp = (&mut st) as *mut stat64;
     let s = to_cstring(path);
 
+    #[cfg(not(target_os = "macos"))]
     let res = unsafe { libc::fstatat64(dir, s.as_ptr(), stp, libc::AT_EMPTY_PATH) };
+    #[cfg(target_os = "macos")]
+    let res = unsafe { libc::fstatat(dir, s.as_ptr(), stp, 0) };
 
     if res < 0 {
         return Err(io::Error::last_os_error());
@@ -305,9 +333,9 @@ pub fn fstatat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<libc::stat64> {
     }
 }
 
-pub fn fstatvfs(fd: RawFd) -> io::Result<libc::statvfs64> {
-    let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
-    let res = unsafe { libc::fstatvfs64(fd, &mut st as *mut libc::statvfs64) };
+pub fn fstatvfs(fd: RawFd) -> io::Result<statvfs64> {
+    let mut st: statvfs64 = unsafe { mem::zeroed() };
+    let res = unsafe { fstatvfs64(fd, &mut st as *mut statvfs64) };
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {
@@ -317,7 +345,7 @@ pub fn fstatvfs(fd: RawFd) -> io::Result<libc::statvfs64> {
 
 pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: libc::mode_t) -> io::Result<RawFd> {
     let s = to_cstring(path);
-    let fd = unsafe { libc::openat64(dir, s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
+    let fd = unsafe { openat64(dir, s.as_ptr(), (flags | O_CLOEXEC) as i32, mode as libc::c_uint) };
     if fd == -1 {
         return Err(io::Error::last_os_error());
     } else {
@@ -391,7 +419,7 @@ fn as_mut_void_ptr<T>(s: &mut [T]) -> *mut libc::c_void {
 
 pub fn open(path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
     let s = to_cstring(path);
-    let fd = unsafe { libc::open64(s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
+    let fd = unsafe { open64(s.as_ptr(), (flags | O_CLOEXEC) as i32, mode as libc::c_uint) };
     if fd == -1 {
         return Err(io::Error::last_os_error());
     } else {
@@ -438,12 +466,12 @@ impl File {
         return Ok(st.st_size as u64);
     }
 
-    pub fn stat(&self) -> io::Result<libc::stat64> {
+    pub fn stat(&self) -> io::Result<stat64> {
         fstat(self.fd)
     }
 
     pub fn truncate(&self, size: u64) -> io::Result<()> {
-        let res = unsafe { libc::ftruncate64(self.fd, size as i64) };
+        let res = unsafe { ftruncate64(self.fd, size as i64) };
         if res < 0 {
             return Err(io::Error::last_os_error());
         } else {
@@ -451,6 +479,7 @@ impl File {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn allocate(&self, offset: u64, len: u64) -> io::Result<()> {
         let res = unsafe { libc::posix_fallocate64(self.fd, offset as i64, len as i64) };
         if res == 0 {
@@ -458,6 +487,11 @@ impl File {
         } else {
             return Err(io::Error::from_raw_os_error(res));
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn allocate(&self, offset: u64, len: u64) -> io::Result<()> {
+        self.truncate(offset + len)
     }
 
     #[allow(dead_code)]
@@ -486,7 +520,7 @@ impl File {
 
     pub fn read_at(&self, buf: &mut [u8], offset: i64) -> io::Result<usize> {
         let nbytes =
-            unsafe { libc::pread64(self.fd, as_mut_void_ptr(buf), buf.len(), offset) };
+            unsafe { pread64(self.fd, as_mut_void_ptr(buf), buf.len(), offset) };
         if nbytes < 0 {
             return Err(io::Error::last_os_error());
         } else {
@@ -495,7 +529,7 @@ impl File {
     }
 
     pub fn write_at(&self, buf: &[u8], offset: i64) -> io::Result<usize> {
-        let nbytes = unsafe { libc::pwrite64(self.fd, as_void_ptr(buf), buf.len(), offset) };
+        let nbytes = unsafe { pwrite64(self.fd, as_void_ptr(buf), buf.len(), offset) };
         if nbytes < 0 {
             return Err(io::Error::last_os_error());
         } else {

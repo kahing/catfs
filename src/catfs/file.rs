@@ -270,7 +270,8 @@ impl Handle {
             )?;
         } else {
             if let Err(e) = self.cache_file.remove_xattr("user.catfs.src_chksum") {
-                if e.raw_os_error().unwrap() != libc::ENODATA {
+                let my_errno = e.raw_os_error().unwrap();
+                if my_errno != libc::ENODATA && my_errno != libc::ENOATTR {
                     return Err(RError::from(e));
                 }
             }
@@ -615,6 +616,7 @@ impl Handle {
         return Ok(offset);
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn copy_splice(&self, rh: &File, wh: &File) -> error::Result<i64> {
         let (pin, pout) = rlibc::pipe()?;
 
@@ -644,6 +646,11 @@ impl Handle {
         }
 
         return Ok(offset);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn copy_splice(&self, rh: &File, wh: &File) -> error::Result<i64> {
+        self.copy_user(rh, wh)
     }
 
     fn copy(&self, to_cache: bool, disable_splice: bool) -> error::Result<()> {
