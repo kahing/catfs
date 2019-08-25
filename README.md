@@ -109,5 +109,6 @@ one byte will cause the entire file to be re-written.
   * [CacheFS](https://github.com/cconstantine/CacheFS) - written in
     Python, not to be confused with FS-Cache above which is in kernel
   * [fuse-cache](https://sourceforge.net/projects/fuse-cache/)
+  * [gocachefs](https://bitbucket.org/photocrati/gocachefs)
   * [mcachefs](https://github.com/Doloops/mcachefs)
   * [pcachefs](https://github.com/ibizaman/pcachefs)
