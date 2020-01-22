@@ -48,7 +48,7 @@ macro_rules! run_in_threadpool {
     ($( fn $name:ident(&mut self, _req: &Request, parent: u64, name: &OsStr, $($arg:ident : $argtype:ty),* $(,)*) $body:block )*) => (
         $(
             fn $name(&mut self, _req: &Request, parent: u64, name: &OsStr, $($arg : $argtype),*) {
-                let mut s = make_self(self);
+                let s = make_self(self);
                 let name = name.to_os_string();
                 self.tp.execute(
                     move || {
@@ -62,7 +62,7 @@ macro_rules! run_in_threadpool {
     ($( fn $name:ident(&mut self, _req: &Request, $($arg:ident : $argtype:ty),* $(,)*) $body:block )*) => (
         $(
             fn $name(&mut self, _req: &Request, $($arg : $argtype),*) {
-                let mut s = make_self(self);
+                let s = make_self(self);
                 self.tp.execute(
                     move || {
                         s.fs.$name($($arg),*);
@@ -85,7 +85,7 @@ impl Filesystem for PCatFS {
         _flags: u32,
         reply: ReplyWrite,
     ) {
-        let mut s = make_self(self);
+        let s = make_self(self);
         let data = data.to_vec();
         self.tp.execute(move || {
             s.fs.write(ino, fh, offset, data, _flags, reply);
@@ -102,7 +102,7 @@ impl Filesystem for PCatFS {
         newname: &OsStr,
         reply: ReplyEmpty,
     ) {
-        let mut s = make_self(self);
+        let s = make_self(self);
         let name = name.to_os_string();
         let newname = newname.to_os_string();
         self.tp.execute(move || {

@@ -37,7 +37,7 @@ pub static O_EXCL: u32 = libc::O_EXCL as u32;
 pub static O_PATH: u32 = 2097152;
 pub static O_TRUNC: u32 = libc::O_TRUNC as u32;
 
-pub fn to_cstring(path: &AsRef<Path>) -> CString {
+pub fn to_cstring(path: &dyn AsRef<Path>) -> CString {
     let bytes = path.as_ref().as_os_str().to_os_string().into_vec();
     return CString::new(bytes).unwrap();
 }
@@ -62,7 +62,7 @@ libc_wrap!{
     pub fn setgid(gid: libc::gid_t) {}
 }
 
-pub fn opendir(path: &AsRef<Path>) -> io::Result<*mut libc::DIR> {
+pub fn opendir(path: &dyn AsRef<Path>) -> io::Result<*mut libc::DIR> {
     let s = to_cstring(path);
     let dh = unsafe { libc::opendir(s.as_ptr()) };
     if dh.is_null() {
@@ -173,7 +173,7 @@ pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<Dirent>> {
     }
 }
 
-pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+pub fn mkdir(path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
     let s = to_cstring(path);
     let res = unsafe { libc::mkdir(s.as_ptr(), mode) };
     if res < 0 {
@@ -183,7 +183,7 @@ pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
     }
 }
 
-pub fn mkdirat(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+pub fn mkdirat(dir: RawFd, path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
     let s = to_cstring(path);
     let res = unsafe { libc::mkdirat(dir, s.as_ptr(), mode) };
     if res < 0 {
@@ -241,7 +241,7 @@ pub fn close(fd: libc::c_int) -> io::Result<()> {
     }
 }
 
-pub fn unlinkat(dir: RawFd, path: &AsRef<Path>, flags: u32) -> io::Result<()> {
+pub fn unlinkat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32) -> io::Result<()> {
     let s = to_cstring(path);
     let res = unsafe { libc::unlinkat(dir, s.as_ptr(), flags as i32) };
     if res < 0 {
@@ -251,7 +251,7 @@ pub fn unlinkat(dir: RawFd, path: &AsRef<Path>, flags: u32) -> io::Result<()> {
     }
 }
 
-pub fn existat(dir: RawFd, path: &AsRef<Path>) -> error::Result<bool> {
+pub fn existat(dir: RawFd, path: &dyn AsRef<Path>) -> error::Result<bool> {
     if let Err(e) = fstatat(dir, path) {
         if error::try_enoent(e)? {
             return Ok(false);
@@ -261,7 +261,7 @@ pub fn existat(dir: RawFd, path: &AsRef<Path>) -> error::Result<bool> {
     return Ok(true);
 }
 
-pub fn renameat(dir: RawFd, path: &AsRef<Path>, newpath: &AsRef<Path>) -> error::Result<()> {
+pub fn renameat(dir: RawFd, path: &dyn AsRef<Path>, newpath: &dyn AsRef<Path>) -> error::Result<()> {
     let s = to_cstring(path);
     let new_s = to_cstring(newpath);
 
@@ -291,7 +291,7 @@ pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat> {
     }
 }
 
-pub fn fstatat(dir: RawFd, path: &AsRef<Path>) -> io::Result<libc::stat> {
+pub fn fstatat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<libc::stat> {
     let mut st: libc::stat = unsafe { mem::zeroed() };
     let stp = (&mut st) as *mut libc::stat;
     let s = to_cstring(path);
@@ -315,7 +315,7 @@ pub fn fstatvfs(fd: RawFd) -> io::Result<libc::statvfs> {
     }
 }
 
-pub fn openat(dir: RawFd, path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
+pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
     let s = to_cstring(path);
     let fd = unsafe { libc::openat(dir, s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
     if fd == -1 {
@@ -326,7 +326,7 @@ pub fn openat(dir: RawFd, path: &AsRef<Path>, flags: u32, mode: u32) -> io::Resu
 }
 
 #[allow(dead_code)]
-pub fn utimes(path: &AsRef<Path>, atime: libc::time_t, mtime: libc::time_t) -> io::Result<()> {
+pub fn utimes(path: &dyn AsRef<Path>, atime: libc::time_t, mtime: libc::time_t) -> io::Result<()> {
     let s = to_cstring(path);
     let mut atv: libc::timeval = unsafe { mem::zeroed() };
     let mut mtv: libc::timeval = unsafe { mem::zeroed() };
@@ -342,7 +342,7 @@ pub fn utimes(path: &AsRef<Path>, atime: libc::time_t, mtime: libc::time_t) -> i
 
 pub fn utimensat(
     dir: RawFd,
-    path: &AsRef<Path>,
+    path: &dyn AsRef<Path>,
     atime: &Timespec,
     mtime: &Timespec,
     flags: u32,
@@ -367,7 +367,7 @@ pub fn utimensat(
     }
 }
 
-pub fn fchmodat(dir: RawFd, path: &AsRef<Path>, mode: u32, flags: u32) -> io::Result<()> {
+pub fn fchmodat(dir: RawFd, path: &dyn AsRef<Path>, mode: u32, flags: u32) -> io::Result<()> {
     let s = to_cstring(path);
     let res = unsafe { libc::fchmodat(dir, s.as_ptr(), mode, flags as i32) };
     if res == 0 {
@@ -389,7 +389,7 @@ fn as_mut_void_ptr<T>(s: &mut [T]) -> *mut libc::c_void {
     return s.as_mut_ptr() as *mut libc::c_void;
 }
 
-pub fn open(path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
+pub fn open(path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
     let s = to_cstring(path);
     let fd = unsafe { libc::open(s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
     if fd == -1 {
@@ -400,7 +400,7 @@ pub fn open(path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
 }
 
 impl File {
-    pub fn openat(dir: RawFd, path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<File> {
+    pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<File> {
         let fd = openat(dir, path, flags, mode)?;
         debug!(
             "<-- openat {:?} {:b} {:#o} = {}",
@@ -413,7 +413,7 @@ impl File {
     }
 
     #[allow(dead_code)]
-    pub fn open(path: &AsRef<Path>, flags: u32, mode: u32) -> io::Result<File> {
+    pub fn open(path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<File> {
         let fd = open(path, flags, mode)?;
         debug!(
             "<-- open {:?} {:b} {:#o} = {}",

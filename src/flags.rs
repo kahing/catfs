@@ -9,7 +9,7 @@ use catfs::flags::DiskSpace;
 
 pub struct Flag<'a, 'b> {
     pub arg: clap::Arg<'a, 'a>,
-    pub value: &'b mut Any,
+    pub value: &'b mut dyn Any,
 }
 
 pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a, 'b>]) {

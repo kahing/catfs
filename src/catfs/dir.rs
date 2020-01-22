@@ -29,12 +29,12 @@ impl Drop for Handle {
 }
 
 #[allow(dead_code)]
-pub fn openpath(path: &AsRef<Path>) -> io::Result<RawFd> {
+pub fn openpath(path: &dyn AsRef<Path>) -> io::Result<RawFd> {
     rlibc::open(&path, rlibc::O_PATH, 0)
 }
 
 impl Handle {
-    pub fn openat(dir: RawFd, path: &AsRef<Path>) -> error::Result<Handle> {
+    pub fn openat(dir: RawFd, path: &dyn AsRef<Path>) -> error::Result<Handle> {
         let fd: RawFd;
         if path.as_ref() == Path::new("") {
             fd = rlibc::openat(dir, &".", rlibc::O_RDONLY, 0)?;
@@ -50,7 +50,7 @@ impl Handle {
     }
 
     #[allow(dead_code)]
-    pub fn open(path: &AsRef<Path>) -> error::Result<Handle> {
+    pub fn open(path: &dyn AsRef<Path>) -> error::Result<Handle> {
         let dh = rlibc::opendir(&path)?;
         return Ok(Handle {
             dh: dh,
@@ -97,11 +97,11 @@ impl Handle {
     }
 
     #[allow(dead_code)]
-    pub fn mkdir(path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+    pub fn mkdir(path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
         rlibc::mkdir(path, mode)
     }
 
-    pub fn rmdirat(src_dir: RawFd, cache_dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
+    pub fn rmdirat(src_dir: RawFd, cache_dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<()> {
         if let Err(e) = rlibc::unlinkat(cache_dir, path, libc::AT_REMOVEDIR as u32) {
             if !error::is_enoent(&e) {
                 return Err(e);
@@ -112,7 +112,7 @@ impl Handle {
     }
 
     #[allow(dead_code)]
-    pub fn rmdir(src_path: &AsRef<Path>, cache_path: &AsRef<Path>) -> io::Result<()> {
+    pub fn rmdir(src_path: &dyn AsRef<Path>, cache_path: &dyn AsRef<Path>) -> io::Result<()> {
         if let Err(e) = fs::remove_dir(cache_path) {
             if !error::is_enoent(&e) {
                 return Err(e);

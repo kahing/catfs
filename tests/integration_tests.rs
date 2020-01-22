@@ -76,7 +76,7 @@ impl<'a> CatFSTests<'a> {
         return Ok((unsafe { fuse::spawn_mount(fs, &self.mnt, &[])? }, ev));
     }
 
-    fn assert_cache_valid(&self, path: &AsRef<Path>) {
+    fn assert_cache_valid(&self, path: &dyn AsRef<Path>) {
         let src_dir = rlibc::open(&self.src, rlibc::O_RDONLY, 0).unwrap();
         let cache_dir = rlibc::open(&self.cache, rlibc::O_RDONLY, 0).unwrap();
 
@@ -190,7 +190,7 @@ impl<'a> Fixture for CatFSTests<'a> {
     }
 }
 
-fn diff(dir1: &AsRef<Path>, dir2: &AsRef<Path>) {
+fn diff(dir1: &dyn AsRef<Path>, dir2: &dyn AsRef<Path>) {
     debug!("diff {:?} {:?}", dir1.as_ref(), dir2.as_ref());
     let status = Command::new("diff")
         .arg("-ru")

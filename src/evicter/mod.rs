@@ -44,7 +44,7 @@ struct EvictItem {
 }
 
 impl EvictItem {
-    fn new(dir: RawFd, path: &AsRef<Path>) -> error::Result<EvictItem> {
+    fn new(dir: RawFd, path: &dyn AsRef<Path>) -> error::Result<EvictItem> {
         let st = rlibc::fstatat(dir, path)?;
 
         Ok(EvictItem {
@@ -54,7 +54,7 @@ impl EvictItem {
         })
     }
 
-    fn new_for_lookup(path: &AsRef<Path>) -> EvictItem {
+    fn new_for_lookup(path: &dyn AsRef<Path>) -> EvictItem {
         EvictItem {
             hash: EvictItem::hash_of(path),
             size: Default::default(),
@@ -62,7 +62,7 @@ impl EvictItem {
         }
     }
 
-    fn hash_of(path: &AsRef<Path>) -> u64 {
+    fn hash_of(path: &dyn AsRef<Path>) -> u64 {
         let mut h = XxHash::with_seed(0);
         path.as_ref().hash(&mut h);
         h.finish()

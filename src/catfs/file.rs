@@ -50,7 +50,7 @@ fn make_rdwr(f: &mut u32) {
     *f = (*f & !rlibc::O_ACCMODE) | rlibc::O_RDWR;
 }
 
-fn maybe_unlinkat(dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
+fn maybe_unlinkat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<()> {
     if let Err(e) = rlibc::unlinkat(dir, path, 0) {
         if !error::is_enoent(&e) {
             return Err(e);
@@ -59,7 +59,7 @@ fn maybe_unlinkat(dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
     return Ok(());
 }
 
-pub fn mkdirat_all(dir: RawFd, path: &AsRef<Path>, mode: u32) -> io::Result<()> {
+pub fn mkdirat_all(dir: RawFd, path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
     let mut p = PathBuf::new();
 
     for c in path.as_ref().components() {
@@ -81,7 +81,7 @@ impl Handle {
     pub fn create(
         src_dir: RawFd,
         cache_dir: RawFd,
-        path: &AsRef<Path>,
+        path: &dyn AsRef<Path>,
         flags: u32,
         mode: u32,
     ) -> error::Result<Handle> {
@@ -115,7 +115,7 @@ impl Handle {
     pub fn open(
         src_dir: RawFd,
         cache_dir: RawFd,
-        path: &AsRef<Path>,
+        path: &dyn AsRef<Path>,
         flags: u32,
         cache_valid_if_present: bool,
         disable_splice: bool,
@@ -242,7 +242,7 @@ impl Handle {
     pub fn make_pristine(
         src_dir: RawFd,
         cache_dir: RawFd,
-        path: &AsRef<Path>,
+        path: &dyn AsRef<Path>,
     ) -> error::Result<()> {
         match File::openat(cache_dir, path, rlibc::O_WRONLY, 0) {
             Err(e) => {
@@ -294,7 +294,7 @@ impl Handle {
         return Ok(false);
     }
 
-    pub fn unlink(src_dir: RawFd, cache_dir: RawFd, path: &AsRef<Path>) -> io::Result<()> {
+    pub fn unlink(src_dir: RawFd, cache_dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<()> {
         maybe_unlinkat(cache_dir, path)?;
         return rlibc::unlinkat(src_dir, path, 0);
     }
@@ -302,7 +302,7 @@ impl Handle {
     pub fn validate_cache(
         src_dir: RawFd,
         cache_dir: RawFd,
-        path: &AsRef<Path>,
+        path: &dyn AsRef<Path>,
         cache_valid_if_present: bool,
         check_only: bool,
     ) -> error::Result<bool> {
@@ -565,7 +565,7 @@ impl Handle {
     pub fn reopen_src(
         &mut self,
         dir: RawFd,
-        path: &AsRef<Path>,
+        path: &dyn AsRef<Path>,
         create: bool,
     ) -> error::Result<()> {
         let _ = self.page_in_res.0.lock().unwrap();

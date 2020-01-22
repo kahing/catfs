@@ -53,7 +53,7 @@ impl FromStr for DiskSpace {
                 'G' => 1 * 1024 * 1024 * 1024,
                 'M' => 1 * 1024 * 1024,
                 'K' => 1 * 1024,
-                '0'...'9' => 1,
+                '0'..='9' => 1,
                 _ => return Err(DiskSpaceParseError("unrecognize unit in ".to_owned() + s)),
             };
             if unit > 1 {

@@ -110,7 +110,7 @@ pub fn make_self<T>(s: &mut T) -> &'static T {
 }
 
 impl CatFS {
-    pub fn new(from: &AsRef<Path>, to: &AsRef<Path>) -> error::Result<CatFS> {
+    pub fn new(from: &dyn AsRef<Path>, to: &dyn AsRef<Path>) -> error::Result<CatFS> {
         let src_dir = rlibc::open(from, rlibc::O_RDONLY, 0)?;
         let cache_dir = rlibc::open(to, rlibc::O_RDONLY, 0)?;
 
