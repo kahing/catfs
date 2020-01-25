@@ -35,7 +35,7 @@ pub struct Inode {
     refcnt: u64,
 }
 
-fn to_filetype(t: u32) -> fuse::FileType {
+fn to_filetype(t: libc::mode_t) -> fuse::FileType {
     match t & libc::S_IFMT {
         libc::S_IFLNK => fuse::FileType::Symlink,
         libc::S_IFREG => fuse::FileType::RegularFile,
@@ -186,7 +186,7 @@ impl Inode {
         }
     }
 
-    pub fn create(&self, name: &OsStr, mode: u32) -> error::Result<(Inode, file::Handle)> {
+    pub fn create(&self, name: &OsStr, mode: libc::mode_t) -> error::Result<(Inode, file::Handle)> {
         let path = self.get_child_name(name);
 
         let flags = rlibc::O_WRONLY | rlibc::O_CREAT | rlibc::O_EXCL;
@@ -276,12 +276,12 @@ impl Inode {
         rlibc::utimensat(self.src_dir, &self.path, atime, mtime, flags)
     }
 
-    pub fn chmod(&self, mode: u32, flags: u32) -> io::Result<()> {
+    pub fn chmod(&self, mode: libc::mode_t, flags: u32) -> io::Result<()> {
         rlibc::fchmodat(self.src_dir, &self.path, mode, flags)?;
         return Ok(());
     }
 
-    pub fn mkdir(&self, name: &OsStr, mode: u32) -> error::Result<Inode> {
+    pub fn mkdir(&self, name: &OsStr, mode: libc::mode_t) -> error::Result<(Inode)> {
         let path = self.get_child_name(name);
 
         rlibc::mkdirat(self.src_dir, &path, mode)?;

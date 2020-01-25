@@ -173,7 +173,7 @@ pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<Dirent>> {
     }
 }
 
-pub fn mkdir(path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
+pub fn mkdir(path: &dyn AsRef<Path>, mode: libc::mode_t) -> io::Result<()> {
     let s = to_cstring(path);
     let res = unsafe { libc::mkdir(s.as_ptr(), mode) };
     if res < 0 {
@@ -183,7 +183,7 @@ pub fn mkdir(path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
     }
 }
 
-pub fn mkdirat(dir: RawFd, path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
+pub fn mkdirat(dir: RawFd, path: &dyn AsRef<Path>, mode: libc::mode_t) -> io::Result<()> {
     let s = to_cstring(path);
     let res = unsafe { libc::mkdirat(dir, s.as_ptr(), mode) };
     if res < 0 {
@@ -315,7 +315,7 @@ pub fn fstatvfs(fd: RawFd) -> io::Result<libc::statvfs> {
     }
 }
 
-pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
+pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: libc::mode_t) -> io::Result<RawFd> {
     let s = to_cstring(path);
     let fd = unsafe { libc::openat(dir, s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
     if fd == -1 {
@@ -367,7 +367,7 @@ pub fn utimensat(
     }
 }
 
-pub fn fchmodat(dir: RawFd, path: &dyn AsRef<Path>, mode: u32, flags: u32) -> io::Result<()> {
+pub fn fchmodat(dir: RawFd, path: &dyn AsRef<Path>, mode: libc::mode_t, flags: u32) -> io::Result<()> {
     let s = to_cstring(path);
     let res = unsafe { libc::fchmodat(dir, s.as_ptr(), mode, flags as i32) };
     if res == 0 {
@@ -400,7 +400,7 @@ pub fn open(path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> 
 }
 
 impl File {
-    pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<File> {
+    pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: libc::mode_t) -> io::Result<File> {
         let fd = openat(dir, path, flags, mode)?;
         debug!(
             "<-- openat {:?} {:b} {:#o} = {}",
@@ -475,7 +475,7 @@ impl File {
         return Ok(());
     }
 
-    pub fn chmod(&self, mode: u32) -> io::Result<()> {
+    pub fn chmod(&self, mode: libc::mode_t) -> io::Result<()> {
         let res = unsafe { libc::fchmod(self.fd, mode) };
         if res == 0 {
             return Ok(());
