@@ -92,7 +92,7 @@ pub fn closedir(dir: *mut libc::DIR) -> io::Result<()> {
 
 pub fn seekdir(dir: *mut libc::DIR, loc: i64) {
     unsafe {
-        libc::seekdir(dir, loc);
+        libc::seekdir(dir, loc as libc::c_long);
     }
 }
 
@@ -109,7 +109,7 @@ impl Default for Dirent {
                 d_off: 0,
                 d_reclen: 0,
                 d_type: libc::DT_REG,
-                d_name: [0i8; 256], // FIXME: don't hardcode 256
+                d_name: [0i8 as libc::c_char; 256], // FIXME: don't hardcode 256
             },
         };
     }
@@ -134,10 +134,10 @@ fn array_to_osstring(cslice: &[libc::c_char]) -> OsString {
 
 impl Dirent {
     pub fn ino(&self) -> u64 {
-        return self.en.d_ino;
+        return self.en.d_ino as u64;
     }
     pub fn off(&self) -> i64 {
-        return self.en.d_off;
+        return self.en.d_off as i64;
     }
     pub fn kind(&self) -> fuse::FileType {
         match self.en.d_type {
@@ -280,10 +280,10 @@ pub fn renameat(dir: RawFd, path: &dyn AsRef<Path>, newpath: &dyn AsRef<Path>) -
     }
 }
 
-pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat> {
-    let mut st: libc::stat = unsafe { mem::zeroed() };
+pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat64> {
+    let mut st: libc::stat64 = unsafe { mem::zeroed() };
 
-    let res = unsafe { libc::fstat(fd, (&mut st) as *mut libc::stat) };
+    let res = unsafe { libc::fstat64(fd, (&mut st) as *mut libc::stat64) };
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {
@@ -291,12 +291,12 @@ pub fn fstat(fd: libc::c_int) -> io::Result<libc::stat> {
     }
 }
 
-pub fn fstatat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<libc::stat> {
-    let mut st: libc::stat = unsafe { mem::zeroed() };
-    let stp = (&mut st) as *mut libc::stat;
+pub fn fstatat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<libc::stat64> {
+    let mut st: libc::stat64 = unsafe { mem::zeroed() };
+    let stp = (&mut st) as *mut libc::stat64;
     let s = to_cstring(path);
 
-    let res = unsafe { libc::fstatat(dir, s.as_ptr(), stp, libc::AT_EMPTY_PATH) };
+    let res = unsafe { libc::fstatat64(dir, s.as_ptr(), stp, libc::AT_EMPTY_PATH) };
 
     if res < 0 {
         return Err(io::Error::last_os_error());
@@ -305,9 +305,9 @@ pub fn fstatat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<libc::stat> {
     }
 }
 
-pub fn fstatvfs(fd: RawFd) -> io::Result<libc::statvfs> {
-    let mut st: libc::statvfs = unsafe { mem::zeroed() };
-    let res = unsafe { libc::fstatvfs(fd, &mut st as *mut libc::statvfs) };
+pub fn fstatvfs(fd: RawFd) -> io::Result<libc::statvfs64> {
+    let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
+    let res = unsafe { libc::fstatvfs64(fd, &mut st as *mut libc::statvfs64) };
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {
@@ -317,7 +317,7 @@ pub fn fstatvfs(fd: RawFd) -> io::Result<libc::statvfs> {
 
 pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
     let s = to_cstring(path);
-    let fd = unsafe { libc::openat(dir, s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
+    let fd = unsafe { libc::openat64(dir, s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
     if fd == -1 {
         return Err(io::Error::last_os_error());
     } else {
@@ -350,12 +350,12 @@ pub fn utimensat(
     let s = to_cstring(path);
     let mut times = [
         libc::timespec {
-            tv_sec: atime.sec,
-            tv_nsec: atime.nsec as i64,
+            tv_sec: atime.sec as libc::time_t,
+            tv_nsec: atime.nsec as libc::c_long,
         },
         libc::timespec {
-            tv_sec: mtime.sec,
-            tv_nsec: mtime.nsec as i64,
+            tv_sec: mtime.sec as libc::time_t,
+            tv_nsec: mtime.nsec as libc::c_long,
         },
     ];
 
@@ -391,7 +391,7 @@ fn as_mut_void_ptr<T>(s: &mut [T]) -> *mut libc::c_void {
 
 pub fn open(path: &dyn AsRef<Path>, flags: u32, mode: u32) -> io::Result<RawFd> {
     let s = to_cstring(path);
-    let fd = unsafe { libc::open(s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
+    let fd = unsafe { libc::open64(s.as_ptr(), (flags | O_CLOEXEC) as i32, mode) };
     if fd == -1 {
         return Err(io::Error::last_os_error());
     } else {
@@ -433,17 +433,17 @@ impl File {
         return self.fd != -1;
     }
 
-    pub fn filesize(&self) -> io::Result<usize> {
+    pub fn filesize(&self) -> io::Result<u64> {
         let st = fstat(self.fd)?;
-        return Ok(st.st_size as usize);
+        return Ok(st.st_size as u64);
     }
 
-    pub fn stat(&self) -> io::Result<libc::stat> {
+    pub fn stat(&self) -> io::Result<libc::stat64> {
         fstat(self.fd)
     }
 
-    pub fn truncate(&self, size: usize) -> io::Result<()> {
-        let res = unsafe { libc::ftruncate(self.fd, size as i64) };
+    pub fn truncate(&self, size: u64) -> io::Result<()> {
+        let res = unsafe { libc::ftruncate64(self.fd, size as i64) };
         if res < 0 {
             return Err(io::Error::last_os_error());
         } else {
@@ -451,8 +451,8 @@ impl File {
         }
     }
 
-    pub fn allocate(&self, offset: u64, len: usize) -> io::Result<()> {
-        let res = unsafe { libc::posix_fallocate(self.fd, offset as i64, len as i64) };
+    pub fn allocate(&self, offset: u64, len: u64) -> io::Result<()> {
+        let res = unsafe { libc::posix_fallocate64(self.fd, offset as i64, len as i64) };
         if res == 0 {
             return Ok(());
         } else {
@@ -461,7 +461,7 @@ impl File {
     }
 
     #[allow(dead_code)]
-    pub fn set_size(&self, size: usize) -> error::Result<()> {
+    pub fn set_size(&self, size: u64) -> error::Result<()> {
         let old_size = self.filesize()?;
 
         if let Err(e) = self.truncate(size) {
@@ -486,7 +486,7 @@ impl File {
 
     pub fn read_at(&self, buf: &mut [u8], offset: i64) -> io::Result<usize> {
         let nbytes =
-            unsafe { libc::pread(self.fd, as_mut_void_ptr(buf), buf.len(), offset) };
+            unsafe { libc::pread64(self.fd, as_mut_void_ptr(buf), buf.len(), offset) };
         if nbytes < 0 {
             return Err(io::Error::last_os_error());
         } else {
@@ -495,7 +495,7 @@ impl File {
     }
 
     pub fn write_at(&self, buf: &[u8], offset: i64) -> io::Result<usize> {
-        let nbytes = unsafe { libc::pwrite(self.fd, as_void_ptr(buf), buf.len(), offset) };
+        let nbytes = unsafe { libc::pwrite64(self.fd, as_void_ptr(buf), buf.len(), offset) };
         if nbytes < 0 {
             return Err(io::Error::last_os_error());
         } else {
