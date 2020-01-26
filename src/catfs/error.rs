@@ -53,10 +53,12 @@ impl<E> RError<E> {
         let mut i: usize = 0;
         let mut chop: usize = 0;
         for f in bt.frames() {
-            if let Some(p) = f.symbols()[0].filename() {
-                if p.file_name().unwrap() == "error.rs" {
-                    chop = i;
-                    break;
+            if let Some(sym) = f.symbols().first() {
+                if let Some(p) = sym.filename() {
+                    if p.file_name().unwrap() == "error.rs" {
+                        chop = i;
+                        break;
+                    }
                 }
             }
             i += 1;
