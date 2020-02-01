@@ -35,12 +35,11 @@ pub fn openpath(path: &AsRef<Path>) -> io::Result<RawFd> {
 
 impl Handle {
     pub fn openat(dir: RawFd, path: &AsRef<Path>) -> error::Result<Handle> {
-        let fd: RawFd;
-        if path.as_ref() == Path::new("") {
-            fd = rlibc::openat(dir, &".", rlibc::O_RDONLY, 0)?;
+        let fd = if path.as_ref() == Path::new("") {
+            rlibc::openat(dir, &".", rlibc::O_RDONLY, 0)?
         } else {
-            fd = rlibc::openat(dir, &path, rlibc::O_RDONLY, 0)?;
-        }
+            rlibc::openat(dir, &path, rlibc::O_RDONLY, 0)?
+        };
         return Ok(Handle {
             dh: rlibc::fdopendir(fd)?,
             offset: 0,

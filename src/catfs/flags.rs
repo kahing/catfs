@@ -44,15 +44,15 @@ impl FromStr for DiskSpace {
     type Err = DiskSpaceParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.ends_with("%") {
+        if s.ends_with('%') {
             return Ok(DiskSpace::Percent(s[0..s.len() - 1].parse()?));
         } else {
             // interpret it as a byte size
             let unit = match s.chars().last().unwrap() {
-                'T' => 1 * 1024 * 1024 * 1024 * 1024,
-                'G' => 1 * 1024 * 1024 * 1024,
-                'M' => 1 * 1024 * 1024,
-                'K' => 1 * 1024,
+                'T' => 1024 * 1024 * 1024 * 1024,
+                'G' => 1024 * 1024 * 1024,
+                'M' => 1024 * 1024,
+                'K' => 1024,
                 '0'...'9' => 1,
                 _ => return Err(DiskSpaceParseError("unrecognize unit in ".to_owned() + s)),
             };
