@@ -135,7 +135,7 @@ impl Evicter {
 
             let mut items = DirWalker::new(self.dir)?
                 .map(|x| EvictItem::new(self.dir, &x))
-                .map_results(|x| Box::new(x))
+                .map_results(Box::new)
                 .fold_results(Box::new(Vec::new()), |mut v, x| {
                     v.push(x);
                     v

@@ -276,7 +276,7 @@ impl CatFS {
                         new_inode.get_ino(),
                         new_inode.get_kind()
                     );
-                    let attr = new_inode.get_attr().clone();
+                    let attr = *new_inode.get_attr();
                     self.insert_inode(new_inode);
 
                     reply.entry(&self.ttl_now(), &attr, 0);
@@ -599,8 +599,7 @@ impl CatFS {
             file = fh_store.handles.get(&fh).unwrap().clone();
         }
         // TODO spawn a thread
-        let mut buf: Vec<u8> = Vec::with_capacity(size as usize);
-        buf.resize(size as usize, 0u8);
+        let mut buf: Vec<u8> = vec![0; size as usize];
         let mut file = file.lock().unwrap();
         match file.read(offset, &mut buf) {
             Ok(nread) => {
@@ -638,7 +637,7 @@ impl CatFS {
                     fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));
                 }
 
-                let attr = inode.get_attr().clone();
+                let attr = *inode.get_attr();
                 debug!("<-- create {:?} = {}", inode.get_path(), fh);
                 self.insert_inode(inode);
                 reply.created(&self.ttl_now(), &attr, 0, fh, flags);
@@ -846,7 +845,7 @@ impl CatFS {
         match parent_inode.mkdir(&name, mode) {
             Ok(inode) => {
                 debug!("<-- mkdir {:?}/{:?}", parent_inode.get_path(), name);
-                let attr = inode.get_attr().clone();
+                let attr = *inode.get_attr();
                 self.insert_inode(inode);
                 reply.entry(&self.ttl_now(), &attr, 0);
             }
