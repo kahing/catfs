@@ -12,7 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::FileExt;
@@ -235,6 +235,17 @@ unit_tests!{
         
         let foo = fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
         assert_eq!(foo.len(), 10 * 1024 * 1024);
+        diff(&f.get_from(), &f.mnt);
+    }
+
+    fn large_seek(f: &CatFSTests) {
+        let mut file = OpenOptions::new().write(true).create(true).open(f.mnt.join("foo")).unwrap();
+        let offset = 2 * 1024 * 1024 * 1024;
+        file.seek(std::io::SeekFrom::Start(offset)).unwrap();
+        file.write_all(b"x").unwrap();
+
+        let foo = fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
+        assert_eq!(foo.len(), offset + 1);
         diff(&f.get_from(), &f.mnt);
     }
 
