@@ -106,6 +106,7 @@ one byte will cause the entire file to be re-written.
   provides caching for some in kernel filesystems but doesn't support
   other FUSE filesystems.
 * Other similar fuse caching filesystems, no idea about their completeness:
+  * [CacheFiles](https://github.com/jnsnow/cachefilesd)
   * [CacheFS](https://github.com/cconstantine/CacheFS) - written in
     Python, not to be confused with FS-Cache above which is in kernel
   * [fuse-cache](https://sourceforge.net/projects/fuse-cache/)
