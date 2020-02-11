@@ -599,8 +599,7 @@ impl CatFS {
             file = fh_store.handles.get(&fh).unwrap().clone();
         }
         // TODO spawn a thread
-        let mut buf: Vec<u8> = Vec::with_capacity(size as usize);
-        buf.resize(size as usize, 0u8);
+        let mut buf: Vec<u8> = vec![0; size as usize];
         let mut file = file.lock().unwrap();
         match file.read(offset, &mut buf) {
             Ok(nread) => {
