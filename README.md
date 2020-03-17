@@ -3,13 +3,13 @@ Catfs is a caching filesystem written in Rust.
 [![Build Status](https://travis-ci.org/kahing/catfs.svg?branch=master)](https://travis-ci.org/kahing/catfs)
 [![Crates.io](https://img.shields.io/crates/v/catfs.svg)](https://crates.io/crates/catfs)
 [![Crates.io Downloads](https://img.shields.io/crates/d/catfs.svg)](https://crates.io/crates/catfs)
-[![Github All Releases](https://img.shields.io/github/downloads/kahing/catfs/total.svg)](https://github.com/kahing/catfs/releases/)
+[![GitHub All Releases](https://img.shields.io/github/downloads/kahing/catfs/total.svg)](https://github.com/kahing/catfs/releases/)
 [![Twitter Follow](https://img.shields.io/twitter/follow/CatfsFuse.svg?style=social&label=Follow)](https://twitter.com/CatfsFuse)
 
 
 # Overview
 
-Catfs allows you to have cached access to another (possibily remote)
+Catfs allows you to have cached access to another (possibly remote)
 filesystem. Caching semantic is read-ahead and write-through (see
 [Current Status](#current-status)). Currently it only provides a data
 cache and all metadata operations hit the source filesystem.
