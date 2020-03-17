@@ -8,7 +8,7 @@ use self::rand::{thread_rng, Rng};
 use catfs::error;
 
 #[allow(dead_code)]
-fn copy_all(dir1: &AsRef<Path>, dir2: &AsRef<Path>) -> error::Result<()> {
+fn copy_all(dir1: &dyn AsRef<Path>, dir2: &dyn AsRef<Path>) -> error::Result<()> {
     fs::create_dir(dir2)?;
 
     for entry in fs::read_dir(dir1)? {

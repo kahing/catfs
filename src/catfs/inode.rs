@@ -106,7 +106,7 @@ impl Inode {
         }
     }
 
-    pub fn lookup_path(dir: RawFd, path: &AsRef<Path>) -> io::Result<fuse::FileAttr> {
+    pub fn lookup_path(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<fuse::FileAttr> {
         let st = rlibc::fstatat(dir, path)?;
         let attr = fuse::FileAttr {
             ino: st.st_ino,
@@ -231,7 +231,7 @@ impl Inode {
         return file::Handle::unlink(self.src_dir, self.cache_dir, &self.get_child_name(name));
     }
 
-    pub fn rename(&mut self, new_name: &OsStr, new_path: &AsRef<Path>) -> error::Result<()> {
+    pub fn rename(&mut self, new_name: &OsStr, new_path: &dyn AsRef<Path>) -> error::Result<()> {
         // XXX emulate some sort of atomicity
 
         // rename src first because if it's a directory, underlining
@@ -281,7 +281,7 @@ impl Inode {
         return Ok(());
     }
 
-    pub fn mkdir(&self, name: &OsStr, mode: u32) -> error::Result<(Inode)> {
+    pub fn mkdir(&self, name: &OsStr, mode: u32) -> error::Result<Inode> {
         let path = self.get_child_name(name);
 
         rlibc::mkdirat(self.src_dir, &path, mode)?;
