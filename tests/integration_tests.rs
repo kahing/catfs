@@ -13,7 +13,7 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Read, Write};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::FileExt;
 
@@ -229,6 +229,7 @@ unit_tests!{
         let status = Command::new("dd")
             .arg("if=/dev/zero").arg(of)
             .arg("bs=1M").arg("count=10")
+            .stderr(Stdio::null())
             .status().expect("failed to execute `dd'");
         assert!(status.success());
         
