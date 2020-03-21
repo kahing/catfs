@@ -97,7 +97,7 @@ impl Handle {
     }
 
     #[allow(dead_code)]
-    pub fn mkdir(path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
+    pub fn mkdir(path: &dyn AsRef<Path>, mode: libc::mode_t) -> io::Result<()> {
         rlibc::mkdir(path, mode)
     }
 

@@ -59,7 +59,7 @@ fn maybe_unlinkat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<()> {
     return Ok(());
 }
 
-pub fn mkdirat_all(dir: RawFd, path: &dyn AsRef<Path>, mode: u32) -> io::Result<()> {
+pub fn mkdirat_all(dir: RawFd, path: &dyn AsRef<Path>, mode: libc::mode_t) -> io::Result<()> {
     let mut p = PathBuf::new();
 
     for c in path.as_ref().components() {
@@ -83,7 +83,7 @@ impl Handle {
         cache_dir: RawFd,
         path: &dyn AsRef<Path>,
         flags: u32,
-        mode: u32,
+        mode: libc::mode_t,
     ) -> error::Result<Handle> {
         // need to read the cache file for writeback
         let mut cache_flags = flags.clone();
@@ -393,7 +393,7 @@ impl Handle {
         return Ok(());
     }
 
-    pub fn chmod(&self, mode: u32) -> io::Result<()> {
+    pub fn chmod(&self, mode: libc::mode_t) -> io::Result<()> {
         self.src_file.chmod(mode)?;
         return Ok(());
     }
@@ -581,7 +581,7 @@ impl Handle {
             }
         }
 
-        let mut mode = 0;
+        let mut mode: libc::mode_t = 0;
         if create {
             let st = self.src_file.stat()?;
             mode = st.st_mode & !libc::S_IFMT;

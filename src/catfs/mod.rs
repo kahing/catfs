@@ -402,13 +402,13 @@ impl CatFS {
 
         if let Some(mode) = mode {
             if let Some(ref file) = file {
-                if let Err(e) = file.chmod(mode) {
+                if let Err(e) = file.chmod(mode as libc::mode_t) {
                     error!("<-- !setattr {:16x} = {}", ino, e);
                     reply.error(e.raw_os_error().unwrap());
                     return;
                 }
             } else {
-                if let Err(e) = inode.chmod(mode, flags.unwrap_or(0)) {
+                if let Err(e) = inode.chmod(mode as libc::mode_t, flags.unwrap_or(0)) {
                     error!("<-- !setattr {:?} = {}", inode.get_path(), e);
                     reply.error(e.raw_os_error().unwrap());
                     return;
@@ -628,7 +628,7 @@ impl CatFS {
         }
 
         let parent_inode = parent_inode.read().unwrap();
-        match parent_inode.create(&name, mode) {
+        match parent_inode.create(&name, mode as libc::mode_t) {
             Ok((inode, file)) => {
                 let fh: u64;
                 {
@@ -843,7 +843,7 @@ impl CatFS {
         }
 
         let parent_inode = parent_inode.read().unwrap();
-        match parent_inode.mkdir(&name, mode) {
+        match parent_inode.mkdir(&name, mode as libc::mode_t) {
             Ok(inode) => {
                 debug!("<-- mkdir {:?}/{:?}", parent_inode.get_path(), name);
                 let attr = inode.get_attr().clone();
