@@ -86,7 +86,7 @@ impl Handle {
         mode: libc::mode_t,
     ) -> error::Result<Handle> {
         // need to read the cache file for writeback
-        let mut cache_flags = flags.clone();
+        let mut cache_flags = flags;
         if (cache_flags & rlibc::O_ACCMODE) == rlibc::O_WRONLY {
             make_rdwr(&mut cache_flags);
         }
@@ -135,7 +135,7 @@ impl Handle {
             path.as_ref(),
             if valid { "is" } else { "is not" },
         );
-        let mut cache_flags = flags.clone();
+        let mut cache_flags = flags;
 
         if !valid {
             // mkdir the parents
@@ -149,12 +149,11 @@ impl Handle {
             }
         }
 
-        let src_file: File;
-        if valid && (flags & rlibc::O_ACCMODE) == rlibc::O_RDONLY {
-            src_file = Default::default();
+        let src_file = if valid && (flags & rlibc::O_ACCMODE) == rlibc::O_RDONLY {
+            Default::default()
         } else {
-            src_file = File::openat(src_dir, path, flags, 0o666)?;
-        }
+            File::openat(src_dir, path, flags, 0o666)?
+        };
 
         let mut handle = Handle {
             src_file: src_file,
@@ -533,7 +532,7 @@ impl Handle {
             if page_in_res.offset >= offset {
                 return Ok(());
             } else if let Some(e) = page_in_res.err.clone() {
-                return Err(e.clone());
+                return Err(e);
             } else {
                 page_in_res = cvar.wait(page_in_res).unwrap();
             }
@@ -585,7 +584,7 @@ impl Handle {
         if create {
             let st = self.src_file.stat()?;
             mode = st.st_mode & !libc::S_IFMT;
-            flags = flags | rlibc::O_CREAT;
+            flags |= rlibc::O_CREAT;
         }
 
         if let Err(e) = self.src_file.close() {

@@ -276,7 +276,7 @@ impl CatFS {
                         new_inode.get_ino(),
                         new_inode.get_kind()
                     );
-                    let attr = new_inode.get_attr().clone();
+                    let attr = *new_inode.get_attr();
                     self.insert_inode(new_inode);
 
                     reply.entry(&self.ttl_now(), &attr, 0);
@@ -637,7 +637,7 @@ impl CatFS {
                     fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));
                 }
 
-                let attr = inode.get_attr().clone();
+                let attr = *inode.get_attr();
                 debug!("<-- create {:?} = {}", inode.get_path(), fh);
                 self.insert_inode(inode);
                 reply.created(&self.ttl_now(), &attr, 0, fh, flags);
@@ -845,7 +845,7 @@ impl CatFS {
         match parent_inode.mkdir(&name, mode as libc::mode_t) {
             Ok(inode) => {
                 debug!("<-- mkdir {:?}/{:?}", parent_inode.get_path(), name);
-                let attr = inode.get_attr().clone();
+                let attr = *inode.get_attr();
                 self.insert_inode(inode);
                 reply.entry(&self.ttl_now(), &attr, 0);
             }
