@@ -113,19 +113,19 @@ impl Inode {
             size: st.st_size as u64,
             blocks: st.st_blocks as u64,
             atime: Timespec {
-                sec: st.st_atime,
+                sec: st.st_atime as i64,
                 nsec: st.st_atime_nsec as i32,
             },
             mtime: Timespec {
-                sec: st.st_mtime,
+                sec: st.st_mtime as i64,
                 nsec: st.st_mtime_nsec as i32,
             },
             ctime: Timespec {
-                sec: st.st_ctime,
+                sec: st.st_ctime as i64,
                 nsec: st.st_ctime_nsec as i32,
             },
             crtime: Timespec {
-                sec: st.st_ctime,
+                sec: st.st_ctime as i64,
                 nsec: st.st_ctime_nsec as i32,
             },
             kind: to_filetype(st.st_mode),
@@ -254,7 +254,7 @@ impl Inode {
         return Ok(());
     }
 
-    pub fn truncate(&mut self, size: usize) -> error::Result<()> {
+    pub fn truncate(&mut self, size: u64) -> error::Result<()> {
         let mut f = File::openat(self.src_dir, &self.path, rlibc::O_WRONLY, 0)?;
         f.set_size(size)?;
         f.close()?;

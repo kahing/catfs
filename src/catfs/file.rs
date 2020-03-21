@@ -377,7 +377,7 @@ impl Handle {
         return Ok(bytes_read);
     }
 
-    pub fn truncate(&mut self, size: usize) -> error::Result<()> {
+    pub fn truncate(&mut self, size: u64) -> error::Result<()> {
         // pristiness comes from size as well so this automatically
         // invalidates the cache file if it's used again
         self.src_file.set_size(size)?;

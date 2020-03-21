@@ -192,11 +192,11 @@ impl CatFS {
         match rlibc::fstatvfs(self.cache_dir) {
             Ok(st) => {
                 reply.statfs(
-                    st.f_blocks,
-                    st.f_bfree,
-                    st.f_bavail,
-                    st.f_files,
-                    st.f_ffree,
+                    st.f_blocks as u64,
+                    st.f_bfree as u64,
+                    st.f_bavail as u64,
+                    st.f_files as u64,
+                    st.f_ffree as u64,
                     st.f_bsize as u32,
                     st.f_namemax as u32,
                     st.f_frsize as u32,
@@ -418,13 +418,13 @@ impl CatFS {
 
         if let Some(size) = size {
             if let Some(ref mut file) = file {
-                if let Err(e) = file.truncate(size as usize) {
+                if let Err(e) = file.truncate(size) {
                     error!("<-- !setattr {:16x} = {}", ino, e);
                     reply.error(e.raw_os_error().unwrap());
                     return;
                 }
             } else {
-                if let Err(e) = inode.truncate(size as usize) {
+                if let Err(e) = inode.truncate(size) {
                     error!("<-- !setattr {:?} = {}", inode.get_path(), e);
                     reply.error(e.raw_os_error().unwrap());
                     return;

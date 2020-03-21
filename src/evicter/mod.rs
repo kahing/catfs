@@ -31,7 +31,7 @@ pub struct Evicter {
     scan_freq: Duration,
     hot_percent: usize, // 25 to keep most recently used 25%
     request_weight: u32,
-    statvfs: fn(RawFd) -> io::Result<libc::statvfs>,
+    statvfs: fn(RawFd) -> io::Result<libc::statvfs64>,
     cv: Arc<Condvar>,
     shutting_down: Arc<Mutex<bool>>,
     t: Option<JoinHandle<()>>,
@@ -99,22 +99,22 @@ impl Hasher for IdentU64Hasher {
 }
 
 // in blocks
-fn to_evict(spec: &DiskSpace, st: &libc::statvfs) -> u64 {
+fn to_evict(spec: &DiskSpace, st: &libc::statvfs64) -> u64 {
     let desired = match *spec {
-        DiskSpace::Percent(p) => ((st.f_blocks * st.f_frsize) as f64 * p / 100.0) as u64,
+        DiskSpace::Percent(p) => ((st.f_blocks * st.f_frsize as u64) as f64 * p / 100.0) as u64,
         DiskSpace::Bytes(b) => b,
     } as i64;
 
-    let x = desired - (st.f_bfree * st.f_frsize) as i64;
+    let x = desired - (st.f_bfree * st.f_frsize as u64) as i64;
     return if x > 0 { x as u64 } else { 0 };
 }
 
 impl Evicter {
-    fn should_evict(&self, st: &libc::statvfs) -> u64 {
+    fn should_evict(&self, st: &libc::statvfs64) -> u64 {
         return to_evict(&self.high_watermark, st);
     }
 
-    fn to_evict(&self, st: &libc::statvfs) -> u64 {
+    fn to_evict(&self, st: &libc::statvfs64) -> u64 {
         return to_evict(&self.low_watermark, st);
     }
 
@@ -235,7 +235,7 @@ impl Evicter {
         dir: RawFd,
         free: &DiskSpace,
         scan_freq: Duration,
-        statvfs: fn(RawFd) -> io::Result<libc::statvfs>,
+        statvfs: fn(RawFd) -> io::Result<libc::statvfs64>,
     ) -> Evicter {
         let mut ev = Evicter {
             dir: dir,
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn to_evict_bytes() {
-        let mut st: libc::statvfs = unsafe { mem::zeroed() };
+        let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
         st.f_bsize = 4096;
         st.f_frsize = 4096;
         st.f_blocks = 100;
@@ -345,8 +345,8 @@ mod tests {
         let prefix = catfs::tests::copy_resources();
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
-        fn fake_statvfs(_dir: RawFd) -> io::Result<libc::statvfs> {
-            let mut st: libc::statvfs = unsafe { mem::zeroed() };
+        fn fake_statvfs(_dir: RawFd) -> io::Result<libc::statvfs64> {
+            let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
             st.f_bsize = 4096;
             st.f_frsize = 4096;
             st.f_blocks = 10;
@@ -367,16 +367,16 @@ mod tests {
         let prefix = catfs::tests::copy_resources();
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
-        fn fake_statvfs(dir: RawFd) -> io::Result<libc::statvfs> {
+        fn fake_statvfs(dir: RawFd) -> io::Result<libc::statvfs64> {
             let cache_size = count_cache_size(dir).unwrap();
 
-            let mut st: libc::statvfs = unsafe { mem::zeroed() };
+            let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
             st.f_bsize = 4096;
             st.f_frsize = 4096;
             st.f_blocks = 100;
             // want 1 free block at beginning. cache_size is 5 * 4K blocks so pretend
             // 94 blocks are used by other things
-            st.f_bfree = st.f_blocks - cache_size / st.f_frsize - 94;
+            st.f_bfree = st.f_blocks - cache_size / (st.f_frsize as u64) - 94;
             return Ok(st);
         }
 
@@ -403,16 +403,16 @@ mod tests {
         let prefix = catfs::tests::copy_resources();
         let fd = rlibc::open(&prefix, rlibc::O_RDONLY, 0).unwrap();
 
-        fn fake_statvfs(dir: RawFd) -> io::Result<libc::statvfs> {
+        fn fake_statvfs(dir: RawFd) -> io::Result<libc::statvfs64> {
             let cache_size = count_cache_size(dir).unwrap();
 
-            let mut st: libc::statvfs = unsafe { mem::zeroed() };
+            let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
             st.f_bsize = 4096;
             st.f_frsize = 4096;
             st.f_blocks = 100;
             // want 1 free block at beginning. cache_size is 5 * 4K blocks so pretend
             // 94 blocks are used by other things
-            st.f_bfree = st.f_blocks - cache_size / st.f_frsize - 94;
+            st.f_bfree = st.f_blocks - cache_size / (st.f_frsize as u64) - 94;
             return Ok(st);
         }
 
