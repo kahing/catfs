@@ -11,7 +11,6 @@ extern crate syslog;
 extern crate time;
 
 use std::env;
-use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::io;
@@ -117,7 +116,7 @@ fn main_internal() -> error::Result<()> {
         fn path_validator(s: String) -> Result<(), String> {
             Path::new(&s)
                 .canonicalize()
-                .map_err(|e| e.description().to_owned())
+                .map_err(|e| e.to_string().to_owned())
                 .and_then(|p| if p.is_dir() {
                     Ok(())
                 } else {

@@ -1,6 +1,5 @@
 extern crate libc;
 
-use std::error::Error;
 use std::ffi::OsString;
 use std::num::{ParseFloatError, ParseIntError};
 use std::str::FromStr;
@@ -30,13 +29,13 @@ impl DiskSpaceParseError {
 
 impl From<ParseIntError> for DiskSpaceParseError {
     fn from(e: ParseIntError) -> DiskSpaceParseError {
-        return DiskSpaceParseError(e.description().to_string());
+        return DiskSpaceParseError(e.to_string());
     }
 }
 
 impl From<ParseFloatError> for DiskSpaceParseError {
     fn from(e: ParseFloatError) -> DiskSpaceParseError {
-        return DiskSpaceParseError(e.description().to_string());
+        return DiskSpaceParseError(e.to_string());
     }
 }
 

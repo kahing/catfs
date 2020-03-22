@@ -216,12 +216,12 @@ pub fn splice(
     let off_from_ptr = if off_from == -1 {
         ptr::null()
     } else {
-        (&mut off_from)
+        &mut off_from
     } as *mut i64;
     let off_to_ptr = if off_to == -1 {
         ptr::null()
     } else {
-        (&mut off_to)
+        &mut off_to
     } as *mut i64;
 
     let res = unsafe { libc::splice(fd, off_from_ptr, other, off_to_ptr, len, 0) };
