@@ -281,7 +281,7 @@ impl Inode {
         return Ok(());
     }
 
-    pub fn mkdir(&self, name: &OsStr, mode: libc::mode_t) -> error::Result<(Inode)> {
+    pub fn mkdir(&self, name: &OsStr, mode: libc::mode_t) -> error::Result<Inode> {
         let path = self.get_child_name(name);
 
         rlibc::mkdirat(self.src_dir, &path, mode)?;
