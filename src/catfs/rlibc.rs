@@ -7,7 +7,7 @@ use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fmt;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::io;
-use std::mem;
+use std::mem::MaybeUninit;
 use std::path::Path;
 #[cfg(not(target_os = "macos"))]
 use std::ptr;
@@ -178,21 +178,18 @@ impl Dirent {
 }
 
 pub fn readdir(dir: *mut libc::DIR) -> io::Result<Option<Dirent>> {
-    let mut entry: Dirent = Default::default();
-    let mut entry_p: *mut libc::dirent = &mut entry.en;
-    let entry_pp: *mut *mut libc::dirent = &mut entry_p;
+    let mut entry_p = MaybeUninit::<libc::dirent>::uninit();
+    let mut entry_pp = ptr::null_mut();
 
-    unsafe {
-        let err = libc::readdir_r(dir, entry_p, entry_pp);
-        if err == 0 {
-            if (*entry_pp).is_null() {
-                return Ok(None);
-            } else {
-                return Ok(Some(entry));
-            }
+    let err = unsafe { libc::readdir_r(dir, entry_p.as_mut_ptr(), &mut entry_pp) };
+    if err == 0 {
+        if entry_pp == ptr::null_mut() {
+            return Ok(None);
         } else {
-            return Err(io::Error::last_os_error());
+            return Ok(Some(Dirent { en: unsafe { entry_p.assume_init() } }));
         }
+    } else {
+        return Err(io::Error::last_os_error());
     }
 }
 
@@ -306,40 +303,39 @@ pub fn renameat(dir: RawFd, path: &dyn AsRef<Path>, newpath: &dyn AsRef<Path>) -
 }
 
 pub fn fstat(fd: libc::c_int) -> io::Result<stat64> {
-    let mut st: stat64 = unsafe { mem::zeroed() };
+    let mut st = MaybeUninit::<stat64>::uninit();
 
-    let res = unsafe { fstat64(fd, (&mut st) as *mut stat64) };
+    let res = unsafe { fstat64(fd, st.as_mut_ptr()) };
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {
-        return Ok(st);
+        return Ok(unsafe { st.assume_init() });
     }
 }
 
 pub fn fstatat(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<stat64> {
-    let mut st: stat64 = unsafe { mem::zeroed() };
-    let stp = (&mut st) as *mut stat64;
+    let mut st = MaybeUninit::<stat64>::uninit();
     let s = to_cstring(path);
 
     #[cfg(not(target_os = "macos"))]
-    let res = unsafe { libc::fstatat64(dir, s.as_ptr(), stp, libc::AT_EMPTY_PATH) };
+    let res = unsafe { libc::fstatat64(dir, s.as_ptr(), st.as_mut_ptr(), libc::AT_EMPTY_PATH) };
     #[cfg(target_os = "macos")]
-    let res = unsafe { libc::fstatat(dir, s.as_ptr(), stp, 0) };
+    let res = unsafe { libc::fstatat(dir, s.as_ptr(), st.as_mut_ptr(), 0) };
 
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {
-        return Ok(st);
+        return Ok(unsafe { st.assume_init() });
     }
 }
 
 pub fn fstatvfs(fd: RawFd) -> io::Result<statvfs64> {
-    let mut st: statvfs64 = unsafe { mem::zeroed() };
-    let res = unsafe { fstatvfs64(fd, &mut st as *mut statvfs64) };
+    let mut st = MaybeUninit::<statvfs64>::uninit();
+    let res = unsafe { fstatvfs64(fd, st.as_mut_ptr()) };
     if res < 0 {
         return Err(io::Error::last_os_error());
     } else {
-        return Ok(st);
+        return Ok(unsafe { st.assume_init() });
     }
 }
 
@@ -356,10 +352,8 @@ pub fn openat(dir: RawFd, path: &dyn AsRef<Path>, flags: u32, mode: libc::mode_t
 #[allow(dead_code)]
 pub fn utimes(path: &dyn AsRef<Path>, atime: libc::time_t, mtime: libc::time_t) -> io::Result<()> {
     let s = to_cstring(path);
-    let mut atv: libc::timeval = unsafe { mem::zeroed() };
-    let mut mtv: libc::timeval = unsafe { mem::zeroed() };
-    atv.tv_sec = atime;
-    mtv.tv_sec = mtime;
+    let atv = libc::timeval { tv_sec: atime, tv_usec: 0 };
+    let mtv = libc::timeval { tv_sec: mtime, tv_usec: 0 };
     let res = unsafe { libc::utimes(s.as_ptr(), [atv, mtv].as_ptr()) };
     if res == 0 {
         return Ok(());
