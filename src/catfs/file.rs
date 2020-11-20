@@ -1,3 +1,4 @@
+extern crate fd;
 extern crate generic_array;
 extern crate libc;
 extern crate sha2;
@@ -7,7 +8,7 @@ extern crate xattr;
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -619,17 +620,19 @@ impl Handle {
     #[cfg(not(target_os = "macos"))]
     fn copy_splice(&self, rh: &File, wh: &File) -> error::Result<i64> {
         let (pin, pout) = rlibc::pipe()?;
+        let pin = fd::FileDesc::new(pin, /*close_on_drop=*/ true);
+        let pout = fd::FileDesc::new(pout, /*close_on_drop=*/ true);
 
         let mut offset = 0;
         loop {
-            let nread = rlibc::splice(rh.as_raw_fd(), offset, pout, -1, 128 * 1024)?;
+            let nread = rlibc::splice(rh.as_raw_fd(), offset, pout.as_raw_fd(), -1, 128 * 1024)?;
             if nread == 0 {
                 break;
             }
 
             let mut written = 0;
             while written < nread {
-                let nxfer = rlibc::splice(pin, -1, wh.as_raw_fd(), offset, 128 * 1024)?;
+                let nxfer = rlibc::splice(pin.as_raw_fd(), -1, wh.as_raw_fd(), offset, 128 * 1024)?;
 
                 written += nxfer;
                 offset += nxfer as i64;
@@ -638,11 +641,11 @@ impl Handle {
             }
         }
 
-        if let Err(e) = rlibc::close(pin) {
-            rlibc::close(pout)?;
+        if let Err(e) = rlibc::close(pin.into_raw_fd()) {
+            rlibc::close(pout.into_raw_fd())?;
             return Err(RError::from(e));
         } else {
-            rlibc::close(pout)?;
+            rlibc::close(pout.into_raw_fd())?;
         }
 
         return Ok(offset);
