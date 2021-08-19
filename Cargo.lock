@@ -188,7 +188,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "fd"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/stemjail/fd-rs.git?rev=3bc3e3587f8904cce8bf29163a2021c2f5906557#3bc3e3587f8904cce8bf29163a2021c2f5906557"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "fuchsia-cprng"

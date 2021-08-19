@@ -15,7 +15,7 @@ chan-signal = "0.2"
 clap = "2.29.0"
 daemonize = "0.2"
 env_logger = "0.4"
-fd = "0.2.3"
+fd = { git = "https://github.com/stemjail/fd-rs.git", rev = "3bc3e3587f8904cce8bf29163a2021c2f5906557" }
 fuse = "0.3.0"
 generic-array = "0.8"
 itertools = "0.6"
