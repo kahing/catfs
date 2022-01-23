@@ -381,7 +381,7 @@ mod tests {
             st.f_blocks = 100;
             // want 1 free block at beginning. cache_size is 5 * 4K blocks so pretend
             // 94 blocks are used by other things
-            st.f_bfree = (st.f_blocks as u64 - cache_size / (st.f_frsize as u64) - 94) as libc::fsblkcnt_t;
+            st.f_bfree = (st.f_blocks as u64 - cache_size / (st.f_frsize as u64) - 94);
             return Ok(st);
         }
 
@@ -417,7 +417,7 @@ mod tests {
             st.f_blocks = 100;
             // want 1 free block at beginning. cache_size is 5 * 4K blocks so pretend
             // 94 blocks are used by other things
-            st.f_bfree = (st.f_blocks as u64 - cache_size / (st.f_frsize as u64) - 94) as libc::fsblkcnt_t;
+            st.f_bfree = (st.f_blocks as u64 - cache_size / (st.f_frsize as u64) - 94);
             return Ok(st);
         }
 
