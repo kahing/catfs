@@ -490,22 +490,6 @@ unit_tests!{
         f.assert_cache_valid(&Path::new("file1"));
     }
 
-    fn fsx(f: &CatFSTests) {
-        let file1 = f.mnt.join("fsxfile");
-
-        let status = Command::new("fsx")
-            .arg("-N")
-            .arg("500")
-            .arg("-S")
-            .arg("0")
-            .arg("-l")
-            .arg("104857600")
-            .arg(file1)
-            .status()
-            .expect("failed to execute `fsx'");
-        assert!(status.success());
-    }
-
     fn prefetch_canceled(f: &CatFSTests) {
         let file1 = f.mnt.join("file1");
         {
