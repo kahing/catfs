@@ -4,7 +4,6 @@ extern crate log;
 extern crate libc;
 extern crate env_logger;
 extern crate fuse;
-extern crate time;
 extern crate xattr;
 
 use std::env;
@@ -16,6 +15,7 @@ use std::io::{Read, Seek, Write};
 use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::FileExt;
+use std::time;
 
 use env_logger::LogBuilder;
 use log::LogRecord;
@@ -141,7 +141,7 @@ impl<'a> Fixture for CatFSTests<'a> {
 
                 fs::create_dir_all(&mnt2)?;
                 fs::create_dir_all(&cache2)?;
-                
+
                 let t2 = CatFSTests {
                     prefix: t.prefix.clone(),
                     mnt: mnt2,
@@ -232,7 +232,7 @@ unit_tests!{
             .stderr(Stdio::null())
             .status().expect("failed to execute `dd'");
         assert!(status.success());
-        
+
         let foo = fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
         assert_eq!(foo.len(), 10 * 1024 * 1024);
         diff(&f.get_from(), &f.mnt);
@@ -370,7 +370,7 @@ unit_tests!{
                 return;
             }
         }
-        
+
         let foo = f.src.join("file1");
         xattr::set(&foo, "user.catfs.random", b"hello").unwrap();
         rlibc::utimes(&foo, 0, 100000000).unwrap();

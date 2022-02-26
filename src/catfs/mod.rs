@@ -1,12 +1,18 @@
-extern crate fuse;
+extern crate fuser;
 extern crate libc;
 extern crate threadpool;
-extern crate time;
 
-use self::fuse::{ReplyEntry, ReplyAttr, ReplyOpen, ReplyEmpty, ReplyDirectory, ReplyData,
-                 ReplyWrite, ReplyCreate, ReplyStatfs};
-
-use self::time::{Duration, Timespec};
+use self::fuser::{
+    ReplyEntry,
+    ReplyAttr,
+    ReplyOpen,
+    ReplyEmpty,
+    ReplyDirectory,
+    ReplyData,ReplyWrite,
+    ReplyCreate,
+    ReplyStatfs,
+    TimeOrNow
+};
 
 use std::cmp;
 use std::collections::HashMap;
@@ -16,6 +22,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::RawFd;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use self::threadpool::ThreadPool;
 
@@ -119,7 +126,7 @@ impl CatFS {
             cache: to.as_ref().to_path_buf(),
             src_dir: src_dir,
             cache_dir: cache_dir,
-            ttl: Duration::zero(),
+            ttl: Duration::ZERO,
             store: Mutex::new(Default::default()),
             dh_store: Mutex::new(Default::default()),
             fh_store: Mutex::new(Default::default()),
@@ -146,7 +153,7 @@ impl CatFS {
             PathBuf::new(),
             root_attr,
         );
-        inode.use_ino(fuse::FUSE_ROOT_ID);
+        inode.use_ino(fuser::FUSE_ROOT_ID);
 
         self.insert_inode(inode);
 
@@ -184,8 +191,8 @@ impl CatFS {
         store.inodes_cache.remove(path);
     }
 
-    fn ttl_now(&self) -> time::Timespec {
-        return time::get_time() + self.ttl;
+    fn ttl_now(&self) -> Duration {
+        return SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap() + self.ttl;
     }
 
     pub fn statfs(&mut self, _ino: u64, reply: ReplyStatfs) {
@@ -343,12 +350,13 @@ impl CatFS {
         uid: Option<u32>,
         gid: Option<u32>,
         size: Option<u64>,
-        atime: Option<Timespec>,
-        mtime: Option<Timespec>,
+        atime: Option<TimeOrNow>,
+        mtime: Option<TimeOrNow>,
+        _ctime: Option<SystemTime>,
         fh: Option<u64>,
-        crtime: Option<Timespec>,
-        chgtime: Option<Timespec>,
-        bkuptime: Option<Timespec>,
+        crtime: Option<SystemTime>,
+        chgtime: Option<SystemTime>,
+        bkuptime: Option<SystemTime>,
         flags: Option<u32>,
         reply: ReplyAttr,
     ) {
@@ -435,6 +443,22 @@ impl CatFS {
         if mtime.is_some() || atime.is_some() {
             let old_attr = inode.get_attr();
 
+            let mtime = match mtime {
+                Some(time_or_now) => match time_or_now {
+                    TimeOrNow::SpecificTime(time) => Some(time),
+                    TimeOrNow::Now => Some(SystemTime::now()),
+                },
+                None => None,
+            };
+
+            let atime = match atime {
+                Some(time_or_now) => match time_or_now {
+                    TimeOrNow::SpecificTime(time) => Some(time),
+                    TimeOrNow::Now => Some(SystemTime::now()),
+                },
+                None => None,
+            };
+
             if let Err(e) = inode.utimes(
                 &atime.unwrap_or(old_attr.atime),
                 &mtime.unwrap_or(old_attr.mtime),
@@ -504,7 +528,7 @@ impl CatFS {
         }
     }
 
-    pub fn opendir(&mut self, ino: u64, flags: u32, reply: ReplyOpen) {
+    pub fn opendir(&mut self, ino: u64, flags: i32, reply: ReplyOpen) {
         let inode: Arc<RwLock<Inode>>;
         {
             let store = self.store.lock().unwrap();
@@ -518,7 +542,7 @@ impl CatFS {
                 let dh = dh_store.next_id;
                 dh_store.next_id += 1;
                 dh_store.handles.insert(dh, dir);
-                reply.opened(dh, flags);
+                reply.opened(dh, flags as u32);
                 debug!("<-- opendir {:?} = {}", inode.get_path(), dh);
             }
             Err(e) => {
@@ -561,14 +585,14 @@ impl CatFS {
         reply.ok();
     }
 
-    pub fn releasedir(&mut self, _ino: u64, dh: u64, _flags: u32, reply: ReplyEmpty) {
+    pub fn releasedir(&mut self, _ino: u64, dh: u64, _flags: i32, reply: ReplyEmpty) {
         let mut dh_store = self.dh_store.lock().unwrap();
         // the handle will be destroyed and closed
         dh_store.handles.remove(&dh);
         reply.ok();
     }
 
-    pub fn open(&mut self, ino: u64, flags: u32, reply: ReplyOpen) {
+    pub fn open(&mut self, ino: u64, flags: i32, reply: ReplyOpen) {
         let inode: Arc<RwLock<Inode>>;
         {
             let store = self.store.lock().unwrap();
@@ -576,13 +600,13 @@ impl CatFS {
         }
 
         let mut inode = inode.write().unwrap();
-        match inode.open(flags, &self.tp) {
+        match inode.open(flags as u32, &self.tp) {
             Ok(file) => {
                 let mut fh_store = self.fh_store.lock().unwrap();
                 let fh = fh_store.next_id;
                 fh_store.next_id += 1;
                 fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));
-                reply.opened(fh, flags);
+                reply.opened(fh, flags as u32);
                 debug!("<-- open {:?} = {}", inode.get_path(), fh);
             }
             Err(e) => {
@@ -592,7 +616,16 @@ impl CatFS {
         }
     }
 
-    pub fn read(&mut self, _ino: u64, fh: u64, offset: i64, size: u32, reply: ReplyData) {
+    pub fn read(
+        &mut self,
+        _ino: u64,
+        fh: u64,
+        offset: i64,
+        size: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        reply: ReplyData
+    ) {
         let file: Arc<Mutex<file::Handle>>;
         {
             let fh_store = self.fh_store.lock().unwrap();
@@ -617,7 +650,8 @@ impl CatFS {
         parent: u64,
         name: OsString,
         mode: u32,
-        flags: u32,
+        _umask: u32,
+        flags: i32,
         reply: ReplyCreate,
     ) {
         let parent_inode: Arc<RwLock<Inode>>;
@@ -640,7 +674,7 @@ impl CatFS {
                 let attr = *inode.get_attr();
                 debug!("<-- create {:?} = {}", inode.get_path(), fh);
                 self.insert_inode(inode);
-                reply.created(&self.ttl_now(), &attr, 0, fh, flags);
+                reply.created(&self.ttl_now(), &attr, 0, fh, flags as u32);
             }
             Err(e) => {
                 error!(
@@ -659,7 +693,7 @@ impl CatFS {
         fh: u64,
         offset: i64,
         data: Vec<u8>,
-        _flags: u32,
+        _flags: i32,
         reply: ReplyWrite,
     ) {
         let nwritten: usize;
@@ -781,8 +815,8 @@ impl CatFS {
         &mut self,
         _ino: u64,
         fh: u64,
-        _flags: u32,
-        _lock_owner: u64,
+        _flags: i32,
+        _lock_owner: Option<u64>,
         _flush: bool,
         reply: ReplyEmpty,
     ) {
@@ -834,7 +868,7 @@ impl CatFS {
         }
     }
 
-    pub fn mkdir(&mut self, parent: u64, name: OsString, mode: u32, reply: ReplyEntry) {
+    pub fn mkdir(&mut self, parent: u64, name: OsString, mode: u32, _umask: u32, reply: ReplyEntry) {
         let parent_inode: Arc<RwLock<Inode>>;
         {
             let store = self.store.lock().unwrap();

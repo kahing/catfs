@@ -1,10 +1,8 @@
-extern crate fuse;
+extern crate fuser;
 extern crate libc;
 extern crate threadpool;
-extern crate time;
 
 use self::threadpool::ThreadPool;
-use self::time::{Duration, Timespec};
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -12,6 +10,7 @@ use std::io;
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 use catfs::dir;
 use catfs::error;
@@ -27,22 +26,22 @@ pub struct Inode {
     name: OsString,
     path: PathBuf,
 
-    attr: fuse::FileAttr,
-    time: Timespec,
+    attr: fuser::FileAttr,
+    time: SystemTime,
     cache_valid_if_present: bool,
     flush_failed: bool,
 
     refcnt: u64,
 }
 
-fn to_filetype(t: libc::mode_t) -> fuse::FileType {
+fn to_filetype(t: libc::mode_t) -> fuser::FileType {
     match t & libc::S_IFMT {
-        libc::S_IFLNK => fuse::FileType::Symlink,
-        libc::S_IFREG => fuse::FileType::RegularFile,
-        libc::S_IFBLK => fuse::FileType::BlockDevice,
-        libc::S_IFDIR => fuse::FileType::Directory,
-        libc::S_IFCHR => fuse::FileType::CharDevice,
-        libc::S_IFIFO => fuse::FileType::NamedPipe,
+        libc::S_IFLNK => fuser::FileType::Symlink,
+        libc::S_IFREG => fuser::FileType::RegularFile,
+        libc::S_IFBLK => fuser::FileType::BlockDevice,
+        libc::S_IFDIR => fuser::FileType::Directory,
+        libc::S_IFCHR => fuser::FileType::CharDevice,
+        libc::S_IFIFO => fuser::FileType::NamedPipe,
         v => panic!("unknown type: {}", v),
     }
 }
@@ -54,7 +53,7 @@ impl Inode {
         cache_dir: RawFd,
         name: OsString,
         path: PathBuf,
-        attr: fuse::FileAttr,
+        attr: fuser::FileAttr,
     ) -> Inode {
         return Inode {
             src_dir: src_dir,
@@ -62,7 +61,7 @@ impl Inode {
             name: name,
             path: path,
             attr: attr,
-            time: time::get_time(),
+            time: SystemTime::now(),
             cache_valid_if_present: false,
             flush_failed: false,
             refcnt: 1,
@@ -75,7 +74,7 @@ impl Inode {
     }
 
     pub fn not_expired(&self, ttl: &Duration) -> bool {
-        (time::get_time() - self.time) > *ttl
+        SystemTime::now() > self.time + *ttl
     }
 
     pub fn get_child_name(&self, name: &OsStr) -> PathBuf {
@@ -88,11 +87,11 @@ impl Inode {
         return &self.path;
     }
 
-    pub fn get_attr(&self) -> &fuse::FileAttr {
+    pub fn get_attr(&self) -> &fuser::FileAttr {
         return &self.attr;
     }
 
-    pub fn get_kind(&self) -> fuse::FileType {
+    pub fn get_kind(&self) -> fuser::FileType {
         return self.attr.kind;
     }
 
@@ -106,35 +105,25 @@ impl Inode {
         }
     }
 
-    pub fn lookup_path(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<fuse::FileAttr> {
+    pub fn lookup_path(dir: RawFd, path: &dyn AsRef<Path>) -> io::Result<fuser::FileAttr> {
         let st = rlibc::fstatat(dir, path)?;
-        let attr = fuse::FileAttr {
+        let attr = fuser::FileAttr {
             ino: st.st_ino,
             size: st.st_size as u64,
             blocks: st.st_blocks as u64,
-            atime: Timespec {
-                sec: st.st_atime as i64,
-                nsec: st.st_atime_nsec as i32,
-            },
-            mtime: Timespec {
-                sec: st.st_mtime as i64,
-                nsec: st.st_mtime_nsec as i32,
-            },
-            ctime: Timespec {
-                sec: st.st_ctime as i64,
-                nsec: st.st_ctime_nsec as i32,
-            },
-            crtime: Timespec {
-                sec: st.st_ctime as i64,
-                nsec: st.st_ctime_nsec as i32,
-            },
+            atime: SystemTime::UNIX_EPOCH + Duration::from_secs(st.st_atime as u64),
+            mtime: SystemTime::UNIX_EPOCH + Duration::from_secs(st.st_mtime as u64),
+            ctime: SystemTime::UNIX_EPOCH + Duration::from_secs(st.st_ctime as u64),
+            crtime: SystemTime::UNIX_EPOCH + Duration::from_secs(st.st_ctime as u64),
             kind: to_filetype(st.st_mode),
             perm: (st.st_mode & !libc::S_IFMT) as u16,
             nlink: st.st_nlink as u32,
             uid: st.st_uid,
             gid: st.st_gid,
             rdev: st.st_rdev as u32,
+            blksize: st.st_blksize as u32,
             flags: 0,
+            padding: 0
         };
         return Ok(attr);
     }
@@ -272,7 +261,7 @@ impl Inode {
         return Ok(());
     }
 
-    pub fn utimes(&self, atime: &Timespec, mtime: &Timespec, flags: u32) -> io::Result<()> {
+    pub fn utimes(&self, atime: &SystemTime, mtime: &SystemTime, flags: u32) -> io::Result<()> {
         rlibc::utimensat(self.src_dir, &self.path, atime, mtime, flags)
     }
 

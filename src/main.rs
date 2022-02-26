@@ -3,12 +3,12 @@ extern crate chan_signal;
 extern crate clap;
 extern crate daemonize;
 extern crate env_logger;
-extern crate fuse;
+extern crate fuser;
 extern crate libc;
 #[macro_use]
 extern crate log;
 extern crate syslog;
-extern crate time;
+extern crate chrono;
 
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -18,6 +18,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time;
 
 use chan_signal::Signal;
 use clap::{App, Arg};
@@ -25,6 +26,8 @@ use daemonize::{Daemonize};
 use env_logger::LogBuilder;
 use log::LogRecord;
 use syslog::{Facility,Severity};
+use chrono::offset::Local;
+use chrono::DateTime;
 
 mod pcatfs;
 mod catfs;
@@ -47,7 +50,8 @@ static mut SYSLOGGER: Option<Box<syslog::Logger>> = None;
 
 fn main_internal() -> error::Result<()> {
     let format = |record: &LogRecord| {
-        let t = time::now();
+        let t = time::SystemTime::now();
+        let t = DateTime::<Local>::from(t);
         let syslog: bool;
         unsafe {
             syslog = SYSLOG;
@@ -55,7 +59,7 @@ fn main_internal() -> error::Result<()> {
         if !syslog {
             format!(
                 "{} {:5} - {}",
-                time::strftime("%Y-%m-%d %H:%M:%S", &t).unwrap(),
+                t.format("%Y-%m-%d %H:%M:%S"),
                 record.level(),
                 record.args()
             )
@@ -244,7 +248,7 @@ fn main_internal() -> error::Result<()> {
     debug!("options are {:?}", flags.mount_options);
 
     {
-        let mut session = fuse::Session::new(fs, Path::new(&flags.mount_point), &options)?;
+        let mut session = fuser::Session::new(fs, Path::new(&flags.mount_point), &options)?;
         let need_unmount = Arc::new(Mutex::new(true));
         let need_unmount2 = need_unmount.clone();
         thread::spawn(move || {

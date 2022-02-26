@@ -1,6 +1,5 @@
-extern crate fuse;
+extern crate fuser;
 extern crate libc;
-extern crate time;
 extern crate xattr;
 
 use std::ffi::{CStr, CString, OsStr, OsString};
@@ -9,14 +8,13 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::io;
 use std::mem::MaybeUninit;
 use std::path::Path;
-#[cfg(not(target_os = "macos"))]
 use std::ptr;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 use std::os::unix::fs::FileExt;
+use std::time::SystemTime;
 
-use self::fuse::FileType;
-use self::time::Timespec;
+use self::fuser::FileType;
 use self::xattr::FileExt as XattrFileExt;
 
 #[cfg(not(target_os = "macos"))]
@@ -162,7 +160,7 @@ impl Dirent {
         #[cfg(target_os = "macos")]
         return self.en.d_seekoff as i64;
     }
-    pub fn kind(&self) -> fuse::FileType {
+    pub fn kind(&self) -> fuser::FileType {
         match self.en.d_type {
             libc::DT_BLK => return FileType::BlockDevice,
             libc::DT_CHR => return FileType::CharDevice,
@@ -365,19 +363,19 @@ pub fn utimes(path: &dyn AsRef<Path>, atime: libc::time_t, mtime: libc::time_t) 
 pub fn utimensat(
     dir: RawFd,
     path: &dyn AsRef<Path>,
-    atime: &Timespec,
-    mtime: &Timespec,
+    atime: &SystemTime,
+    mtime: &SystemTime,
     flags: u32,
 ) -> io::Result<()> {
     let s = to_cstring(path);
     let mut times = [
         libc::timespec {
-            tv_sec: atime.sec as libc::time_t,
-            tv_nsec: atime.nsec as libc::c_long,
+            tv_sec: atime.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as libc::time_t,
+            tv_nsec: atime.duration_since(SystemTime::UNIX_EPOCH).unwrap().subsec_nanos() as libc::c_long,
         },
         libc::timespec {
-            tv_sec: mtime.sec as libc::time_t,
-            tv_nsec: mtime.nsec as libc::c_long,
+            tv_sec: mtime.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as libc::time_t,
+            tv_nsec: mtime.duration_since(SystemTime::UNIX_EPOCH).unwrap().subsec_nanos() as libc::c_long,
         },
     ];
 
