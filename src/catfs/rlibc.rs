@@ -17,9 +17,9 @@ use std::time::SystemTime;
 use self::fuser::FileType;
 use self::xattr::FileExt as XattrFileExt;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_pointer_width = "32")))]
 use self::libc::{fstat64, fstatvfs64, ftruncate64, open64, openat64, pread64, pwrite64, stat64, statvfs64};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_pointer_width = "32"))]
 use self::libc::{fstat as fstat64, fstatvfs as fstatvfs64, ftruncate as ftruncate64, open as open64, openat as openat64, pread as pread64, pwrite as pwrite64, stat as stat64, statvfs as statvfs64};
 
 use catfs::error;
