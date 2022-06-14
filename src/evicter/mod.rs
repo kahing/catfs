@@ -24,10 +24,14 @@ use self::dir_walker::DirWalker;
 use self::itertools::Itertools;
 use self::twox_hash::XxHash;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_pointer_width = "32")))]
 use self::libc::statvfs64;
-#[cfg(target_os = "macos")]
+#[cfg(not(any(target_os = "macos", target_pointer_width = "32")))]
+type fsblkcnt_t = u64;
+#[cfg(any(target_os = "macos", target_pointer_width = "32"))]
 use self::libc::{statvfs as statvfs64};
+#[cfg(any(target_os = "macos", target_pointer_width = "32"))]
+type fsblkcnt_t = libc::fsblkcnt_t;
 
 pub struct Evicter {
     dir: RawFd,
@@ -381,7 +385,7 @@ mod tests {
             st.f_blocks = 100;
             // want 1 free block at beginning. cache_size is 5 * 4K blocks so pretend
             // 94 blocks are used by other things
-            st.f_bfree = st.f_blocks as u64 - cache_size / (st.f_frsize as u64) - 94;
+            st.f_bfree = (st.f_blocks as u64 - cache_size / (st.f_frsize as u64) - 94) as fsblkcnt_t;
             return Ok(st);
         }
 
@@ -417,7 +421,7 @@ mod tests {
             st.f_blocks = 100;
             // want 1 free block at beginning. cache_size is 5 * 4K blocks so pretend
             // 94 blocks are used by other things
-            st.f_bfree = st.f_blocks as u64 - cache_size / (st.f_frsize as u64) - 94;
+            st.f_bfree = (st.f_blocks as u64 - cache_size / (st.f_frsize as u64) - 94) as fsblkcnt_t;
             return Ok(st);
         }
 

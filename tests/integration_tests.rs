@@ -3,12 +3,13 @@
 extern crate log;
 extern crate libc;
 extern crate env_logger;
-extern crate fuse;
-extern crate time;
+extern crate fuser;
 extern crate xattr;
+extern crate chrono;
 
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::OsStrExt;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -16,9 +17,12 @@ use std::io::{Read, Seek, Write};
 use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::FileExt;
+use std::time;
 
 use env_logger::LogBuilder;
 use log::LogRecord;
+use chrono::offset::Local;
+use chrono::DateTime;
 
 extern crate catfs;
 
@@ -42,17 +46,17 @@ trait Fixture {
     fn teardown(self) -> error::Result<()>;
 }
 
-struct CatFSTests<'a> {
+struct CatFSTests {
     prefix: PathBuf,
     mnt: PathBuf,
     src: PathBuf,
     cache: PathBuf,
-    session: Option<fuse::BackgroundSession<'a>>,
+    session: Option<fuser::BackgroundSession>,
     evicter: Option<Evicter>,
-    nested: Option<Box<CatFSTests<'a>>>,
+    nested: Option<Box<CatFSTests>>,
 }
 
-impl<'a> CatFSTests<'a> {
+impl CatFSTests {
     fn get_orig_dir() -> PathBuf {
         let manifest = env::var_os("CARGO_MANIFEST_DIR").unwrap();
         return PathBuf::from(manifest).join("tests/resources");
@@ -66,14 +70,14 @@ impl<'a> CatFSTests<'a> {
         return self.cache.clone();
     }
 
-    fn mount(&self) -> error::Result<(fuse::BackgroundSession<'a>, Evicter)> {
+    fn mount(&self) -> error::Result<(fuser::BackgroundSession, Evicter)> {
         let fs = CatFS::new(&self.src, &self.cache)?;
         let fs = PCatFS::new(fs);
 
         let cache_dir = fs.get_cache_dir()?;
         // essentially no-op, but ensures that it starts and terminates
         let ev = Evicter::new(cache_dir, &DiskSpace::Bytes(1));
-        return Ok((unsafe { fuse::spawn_mount(fs, &self.mnt, &[])? }, ev));
+        return Ok((unsafe { fuser::spawn_mount(fs, &self.mnt, &[])? }, ev));
     }
 
     fn assert_cache_valid(&self, path: &dyn AsRef<Path>) {
@@ -86,13 +90,14 @@ impl<'a> CatFSTests<'a> {
     }
 }
 
-impl<'a> Fixture for CatFSTests<'a> {
-    fn setup() -> error::Result<CatFSTests<'a>> {
+impl Fixture for CatFSTests {
+    fn setup() -> error::Result<CatFSTests> {
         let format = |record: &LogRecord| {
-            let t = time::now();
+            let t = time::SystemTime::now();
+            let t = DateTime::<Local>::from(t);
             format!(
                 "{} {:5} - {}",
-                time::strftime("%Y-%m-%d %H:%M:%S", &t).unwrap(),
+                t.format("%Y-%m-%d %H:%M:%S"),
                 record.level(),
                 record.args()
             )
@@ -141,7 +146,7 @@ impl<'a> Fixture for CatFSTests<'a> {
 
                 fs::create_dir_all(&mnt2)?;
                 fs::create_dir_all(&cache2)?;
-                
+
                 let t2 = CatFSTests {
                     prefix: t.prefix.clone(),
                     mnt: mnt2,
@@ -232,7 +237,7 @@ unit_tests!{
             .stderr(Stdio::null())
             .status().expect("failed to execute `dd'");
         assert!(status.success());
-        
+
         let foo = fs::symlink_metadata(&f.get_from().join("foo")).unwrap();
         assert_eq!(foo.len(), 10 * 1024 * 1024);
         diff(&f.get_from(), &f.mnt);
@@ -370,7 +375,7 @@ unit_tests!{
                 return;
             }
         }
-        
+
         let foo = f.src.join("file1");
         xattr::set(&foo, "user.catfs.random", b"hello").unwrap();
         rlibc::utimes(&foo, 0, 100000000).unwrap();
