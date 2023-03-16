@@ -101,6 +101,8 @@ fn main_internal() -> error::Result<()> {
     flags.mount_options.push(
         OsString::from("default_permissions"),
     );
+    flags.catfs_threadpool_size = 5;
+    flags.pcatfs_threadpool_size = 100;
 
     let app = App::new("catfs")
         .about("Cache Anything FileSystem")
@@ -193,6 +195,20 @@ fn main_internal() -> error::Result<()> {
                     .validator(path_validator),
                 value: &mut flags.mount_point,
             },
+            flags::Flag{
+                arg: Arg::with_name("catfs-threadpool-size")
+                    .short("t")
+                    .takes_value(true)
+                    .help("Catfs thread pool size"),
+                value: &mut flags.catfs_threadpool_size,
+            },
+            flags::Flag{
+                arg: Arg::with_name("pcatfs-threadpool-size")
+                    .short("p")
+                    .takes_value(true)
+                    .help("PCatfs thread pool size"),
+                value: &mut flags.pcatfs_threadpool_size,
+            },
         ];
 
 
@@ -233,14 +249,14 @@ fn main_internal() -> error::Result<()> {
     let signal = chan_signal::notify(&[Signal::INT, Signal::TERM]);
     let path_from = Path::new(&flags.cat_from).canonicalize()?;
     let path_to = Path::new(&flags.cat_to).canonicalize()?;
-    let fs = catfs::CatFS::new(&path_from, &path_to)?;
-    let fs = pcatfs::PCatFS::new(fs);
+    let fs = catfs::CatFS::new(&path_from, &path_to, flags.catfs_threadpool_size)?;
+    let fs = pcatfs::PCatFS::new(fs, flags.pcatfs_threadpool_size);
     let cache_dir = fs.get_cache_dir()?;
     let mut options: Vec<&OsStr> = Vec::new();
     for i in 0..flags.mount_options.len() {
         options.push(&flags.mount_options[i]);
     }
-
+    debug!("threadpool options are catfs:{:?} pcatfs:{:?}", flags.catfs_threadpool_size, flags.pcatfs_threadpool_size);
     debug!("options are {:?}", flags.mount_options);
 
     {

@@ -28,9 +28,9 @@ pub fn make_self<T>(s: &mut T) -> &'static mut T {
 }
 
 impl PCatFS {
-    pub fn new(fs: CatFS) -> PCatFS {
+    pub fn new(fs: CatFS, n_threads : usize) -> PCatFS {
         PCatFS {
-            tp: ThreadPool::new(100),
+            tp: ThreadPool::new(n_threads),
             fs: fs,
         }
     }

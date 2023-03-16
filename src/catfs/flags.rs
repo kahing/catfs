@@ -74,6 +74,8 @@ pub struct FlagStorage {
     pub free_space: DiskSpace,
     pub uid: libc::uid_t,
     pub gid: libc::gid_t,
+    pub catfs_threadpool_size: usize,
+    pub pcatfs_threadpool_size: usize
 }
 
 #[cfg(test)]

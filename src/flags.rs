@@ -86,6 +86,11 @@ pub fn parse_options<'a, 'b>(mut app: clap::App<'a, 'a>, flags: &'b mut [Flag<'a
                 *v = String::from(s);
                 continue;
             }
+            if let Some(v) = f.value.downcast_mut::<usize>() {
+                let s = matches.value_of(name).unwrap();
+                *v = s.parse().unwrap();
+                continue;
+            }
             if let Some(v) = f.value.downcast_mut::<OsString>() {
                 let s = matches.value_of_os(name).unwrap();
                 *v = s.to_os_string();
