@@ -262,6 +262,7 @@ impl Handle {
         return Ok(());
     }
 
+    #[cfg(target_os = "linux")]
     pub fn set_pristine(&self, pristine: bool) -> error::Result<()> {
         if pristine {
             self.cache_file.set_xattr(
@@ -272,7 +273,26 @@ impl Handle {
         } else {
             if let Err(e) = self.cache_file.remove_xattr("user.catfs.src_chksum") {
                 let my_errno = e.raw_os_error().unwrap();
-                if my_errno != libc::ENODATA && my_errno != libc::ENOATTR {
+                if my_errno != libc::ENODATA {
+                    return Err(RError::from(e));
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn set_pristine(&self, pristine: bool) -> error::Result<()> {
+        if pristine {
+            self.cache_file.set_xattr(
+                "user.catfs.src_chksum",
+                Handle::src_chksum(&self.src_file)?
+                    .as_slice(),
+            )?;
+        } else {
+            if let Err(e) = self.cache_file.remove_xattr("user.catfs.src_chksum") {
+                let my_errno = e.raw_os_error().unwrap();
+                if my_errno != libc::ENODATA {
                     return Err(RError::from(e));
                 }
             }
@@ -569,7 +589,7 @@ impl Handle {
         path: &dyn AsRef<Path>,
         create: bool,
     ) -> error::Result<()> {
-        let _ = self.page_in_res.0.lock().unwrap();
+        let _unused = self.page_in_res.0.lock().unwrap();
 
         let mut buf = [0u8; 0];
         let mut flags = rlibc::O_RDWR;
