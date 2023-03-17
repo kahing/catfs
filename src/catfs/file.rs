@@ -168,7 +168,7 @@ impl Handle {
         if !valid && (flags & rlibc::O_TRUNC) == 0 {
             debug!("read ahead {:?}", path.as_ref());
             handle.has_page_in_thread = true;
-            let mut h = handle.clone();
+            let h = handle.clone();
             let path = path.as_ref().to_path_buf();
             tp.lock().unwrap().execute(move || {
                 if let Err(e) = h.copy(true, disable_splice) {
@@ -190,10 +190,6 @@ impl Handle {
                         debug!("read ahead {:?} canceled", path);
                     }
                 }
-                // the files are always closed in the main IO path, consume
-                // the fds to prevent closing
-                h.src_file.into_raw();
-                h.cache_file.into_raw();
             });
         }
 
@@ -248,14 +244,12 @@ impl Handle {
             Err(e) => {
                 return Err(RError::from(e));
             }
-            Ok(mut cache) => {
-                let mut src = File::openat(src_dir, path, rlibc::O_RDONLY, 0)?;
+            Ok(cache) => {
+                let src = File::openat(src_dir, path, rlibc::O_RDONLY, 0)?;
                 cache.set_xattr(
                     "user.catfs.src_chksum",
                     Handle::src_chksum(&src)?.as_slice(),
                 )?;
-                src.close()?;
-                cache.close()?;
             }
         }
 
@@ -328,9 +322,9 @@ impl Handle {
         check_only: bool,
     ) -> error::Result<bool> {
         match File::openat(src_dir, path, rlibc::O_RDONLY, 0) {
-            Ok(mut src_file) => {
+            Ok(src_file) => {
                 match File::openat(cache_dir, path, rlibc::O_RDONLY, 0) {
-                    Ok(mut cache_file) => {
+                    Ok(cache_file) => {
                         let valid: bool;
                         if cache_valid_if_present || Handle::is_pristine(&src_file, &cache_file)? {
                             valid = true;
@@ -341,12 +335,9 @@ impl Handle {
                                 rlibc::unlinkat(cache_dir, path, 0)?;
                             }
                         }
-                        src_file.close()?;
-                        cache_file.close()?;
                         return Ok(valid);
                     }
                     Err(e) => {
-                        src_file.close()?;
                         if error::try_enoent(e)? {
                             return Ok(false);
                         }
@@ -496,7 +487,7 @@ impl Handle {
             if let Err(e) = self.src_file.flush() {
                 error!("!flush(src) = {}", e);
                 // flush failed, now the fd is invalid, get rid of it
-                self.src_file.into_raw();
+                std::mem::drop(&self.src_file);
 
                 // we couldn't flush the src_file, because of some
                 // linux vfs oddity the file would appear to be
@@ -609,13 +600,6 @@ impl Handle {
             flags |= rlibc::O_CREAT;
         }
 
-        if let Err(e) = self.src_file.close() {
-            // normal for this close to fail
-            if e.raw_os_error().unwrap() != libc::ENOTSUP {
-                return Err(RError::from(e));
-            }
-        }
-
         self.src_file = File::openat(dir, path, flags, mode)?;
         return Ok(());
     }
@@ -623,18 +607,23 @@ impl Handle {
     fn copy_user(&self, rh: &File, wh: &File) -> error::Result<i64> {
         let mut buf = [0u8; 32 * 1024];
         let mut offset = 0;
-        loop {
-            let nread = rh.read_at(&mut buf, offset)?;
-            if nread == 0 {
-                break;
-            }
-            wh.write_at(&buf[..nread], offset)?;
-            offset += nread as i64;
+        match wh.write_lock() {
+            Ok(write_fd) => {
+                loop {
+                    let nread = rh.read_at(&mut buf, offset)?;
+                    if nread == 0 {
+                        break;
+                    }
+                    wh.write_at_nolock(&buf[..nread], offset, *write_fd)?;
+                    offset += nread as i64;
 
-            self.notify_offset(Ok(offset), false)?;
+                    self.notify_offset(Ok(offset), false)?;
+                }
+                return Ok(offset);
+            },
+            Err(_) => return Err(RError::from(io::Error::new(io::ErrorKind::Other, "couldn't get write lock!"))),
         }
 
-        return Ok(offset);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -642,23 +631,33 @@ impl Handle {
         let (pin, pout) = rlibc::pipe()?;
         let pin = fd::FileDesc::new(pin, /*close_on_drop=*/ true);
         let pout = fd::FileDesc::new(pout, /*close_on_drop=*/ true);
-
         let mut offset = 0;
-        loop {
-            let nread = rlibc::splice(rh.as_raw_fd(), offset, pout.as_raw_fd(), -1, 128 * 1024)?;
-            if nread == 0 {
-                break;
-            }
 
-            let mut written = 0;
-            while written < nread {
-                let nxfer = rlibc::splice(pin.as_raw_fd(), -1, wh.as_raw_fd(), offset, 128 * 1024)?;
+        match wh.write_lock() {
+            Ok( write_fd ) => {
+                match rh.read_lock() {
+                    Ok(read_fd) => {
+                        loop {
+                            let nread = rlibc::splice(*read_fd, offset, pout.as_raw_fd(), -1, 128 * 1024)?;
+                            if nread == 0 {
+                                break;
+                            }
 
-                written += nxfer;
-                offset += nxfer as i64;
+                            let mut written = 0;
+                            while written < nread {
+                                let nxfer = rlibc::splice(pin.as_raw_fd(), -1, *write_fd, offset, 128 * 1024)?;
 
-                self.notify_offset(Ok(offset), false)?;
-            }
+                                written += nxfer;
+                                offset += nxfer as i64;
+
+                                self.notify_offset(Ok(offset), false)?;
+                            }
+                        }
+                    },
+                    Err(_) => return Err(RError::from(io::Error::new(io::ErrorKind::Other, "couldn't get read lock!"))),
+                }
+            },
+            Err(_) => return Err(RError::from(io::Error::new(io::ErrorKind::Other, "couldn't get write lock!"))),
         }
 
         if let Err(e) = rlibc::close(pin.into_raw_fd()) {
@@ -716,25 +715,14 @@ impl Handle {
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        if self.cache_file.valid() {
-            if let Err(e) = self.cache_file.close() {
-                error!("!close(cache) = {}", RError::from(e));
-            }
-        }
-
-        if self.src_file.valid() {
-            if let Err(e) = self.src_file.close() {
-                error!("!close(src) = {}", RError::from(e));
-            }
-        }
     }
 }
 
 impl Clone for Handle {
     fn clone(&self) -> Self {
         return Handle {
-            src_file: File::with_fd(self.src_file.as_raw_fd()),
-            cache_file: File::with_fd(self.cache_file.as_raw_fd()),
+            src_file: self.src_file.clone(),
+            cache_file: self.cache_file.clone(),
             dirty: self.dirty,
             write_through_failed: self.write_through_failed,
             has_page_in_thread: false,
