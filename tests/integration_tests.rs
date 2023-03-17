@@ -67,8 +67,8 @@ impl<'a> CatFSTests<'a> {
     }
 
     fn mount(&self) -> error::Result<(fuse::BackgroundSession<'a>, Evicter)> {
-        let fs = CatFS::new(&self.src, &self.cache)?;
-        let fs = PCatFS::new(fs);
+        let fs = CatFS::new(&self.src, &self.cache, 5)?;
+        let fs = PCatFS::new(fs, 100);
 
         let cache_dir = fs.get_cache_dir()?;
         // essentially no-op, but ensures that it starts and terminates
