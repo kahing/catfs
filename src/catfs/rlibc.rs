@@ -566,15 +566,6 @@ impl File {
         }
     }
 
-    pub fn write_at_nolock(&self, buf: &[u8], offset: i64, fd : i32 ) -> io::Result<usize> {
-        let nbytes = unsafe { pwrite64(fd, as_void_ptr(buf), buf.len(), offset) };
-        if nbytes < 0 {
-            return Err(io::Error::last_os_error());
-        } else {
-            return Ok(nbytes as usize);
-        }
-    }
-
     pub fn write_at(&self, buf: &[u8], offset: i64) -> io::Result<usize> {
         match self.fd.write() {
             Ok(fd) => {
@@ -642,7 +633,7 @@ impl Drop for File {
     fn drop(&mut self) {
         if Arc::strong_count(&self.fd) == 1 {
             match self.fd.write() {
-                Ok(fd) => { 
+                Ok(fd) => {
                     if *fd >= 0 {
                         let res = unsafe { libc::close(*fd) };
                         debug!( "<-- closed {} result: {}", *fd, res);

@@ -576,9 +576,9 @@ impl CatFS {
         }
 
         let mut inode = inode.write().unwrap();
+        let mut fh_store = self.fh_store.lock().unwrap();
         match inode.open(flags, &self.tp) {
             Ok(file) => {
-                let mut fh_store = self.fh_store.lock().unwrap();
                 let fh = fh_store.next_id;
                 fh_store.next_id += 1;
                 fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));

@@ -105,7 +105,7 @@ checksum = "560c32574a12a89ecd91f5e742165893f86e3ab98d21f8ea548658eb9eef5f40"
 
 [[package]]
 name = "catfs"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "backtrace",
  "chan-signal",
