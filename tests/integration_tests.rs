@@ -67,8 +67,8 @@ impl<'a> CatFSTests<'a> {
     }
 
     fn mount(&self) -> error::Result<(fuse::BackgroundSession<'a>, Evicter)> {
-        let fs = CatFS::new(&self.src, &self.cache)?;
-        let fs = PCatFS::new(fs);
+        let fs = CatFS::new(&self.src, &self.cache, 5)?;
+        let fs = PCatFS::new(fs, 100);
 
         let cache_dir = fs.get_cache_dir()?;
         // essentially no-op, but ensures that it starts and terminates
@@ -374,10 +374,9 @@ unit_tests!{
         let foo = f.src.join("file1");
         xattr::set(&foo, "user.catfs.random", b"hello").unwrap();
         rlibc::utimes(&foo, 0, 100000000).unwrap();
-        let mut fh = rlibc::File::open(&foo, rlibc::O_RDONLY, 0).unwrap();
+        let fh = rlibc::File::open(&foo, rlibc::O_RDONLY, 0).unwrap();
         let s = file::Handle::src_str_to_checksum(&fh).unwrap();
         assert_eq!(s, OsStr::new("100000000\n6\n"));
-        fh.close().unwrap();
     }
 
     fn check_dirty(f: &CatFSTests) {

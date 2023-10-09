@@ -110,7 +110,7 @@ pub fn make_self<T>(s: &mut T) -> &'static T {
 }
 
 impl CatFS {
-    pub fn new(from: &dyn AsRef<Path>, to: &dyn AsRef<Path>) -> error::Result<CatFS> {
+    pub fn new(from: &dyn AsRef<Path>, to: &dyn AsRef<Path>, n_threads : usize) -> error::Result<CatFS> {
         let src_dir = rlibc::open(from, rlibc::O_RDONLY, 0)?;
         let cache_dir = rlibc::open(to, rlibc::O_RDONLY, 0)?;
 
@@ -123,7 +123,7 @@ impl CatFS {
             store: Mutex::new(Default::default()),
             dh_store: Mutex::new(Default::default()),
             fh_store: Mutex::new(Default::default()),
-            tp: Mutex::new(ThreadPool::new(5)),
+            tp: Mutex::new(ThreadPool::new(n_threads)),
         };
 
         catfs.make_root()?;
@@ -576,9 +576,9 @@ impl CatFS {
         }
 
         let mut inode = inode.write().unwrap();
+        let mut fh_store = self.fh_store.lock().unwrap();
         match inode.open(flags, &self.tp) {
             Ok(file) => {
-                let mut fh_store = self.fh_store.lock().unwrap();
                 let fh = fh_store.next_id;
                 fh_store.next_id += 1;
                 fh_store.handles.insert(fh, Arc::new(Mutex::new(file)));

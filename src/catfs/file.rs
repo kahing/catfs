@@ -11,6 +11,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use self::generic_array::GenericArray;
 use self::generic_array::typenum::U64;
@@ -38,7 +39,7 @@ pub struct Handle {
     cache_file: File,
     dirty: bool,
     write_through_failed: bool,
-    has_page_in_thread: bool,
+    has_page_in_thread: Arc<AtomicBool>,
     page_in_res: CvData<PageInInfo>,
 }
 
@@ -108,7 +109,7 @@ impl Handle {
             cache_file: File::openat(cache_dir, path, cache_flags, mode)?,
             dirty: true,
             write_through_failed: false,
-            has_page_in_thread: false,
+            has_page_in_thread: Arc::new(AtomicBool::new(false)),
             page_in_res: Arc::new((Default::default(), Condvar::new())),
         });
     }
@@ -156,19 +157,19 @@ impl Handle {
             File::openat(src_dir, path, flags, 0o666)?
         };
 
-        let mut handle = Handle {
+        let handle = Handle {
             src_file: src_file,
             cache_file: File::openat(cache_dir, path, cache_flags, 0o666)?,
             dirty: false,
             write_through_failed: false,
-            has_page_in_thread: false,
+            has_page_in_thread: Arc::new(AtomicBool::new(false)),
             page_in_res: Arc::new((Default::default(), Condvar::new())),
         };
 
         if !valid && (flags & rlibc::O_TRUNC) == 0 {
             debug!("read ahead {:?}", path.as_ref());
-            handle.has_page_in_thread = true;
-            let mut h = handle.clone();
+            handle.has_page_in_thread.store(true, Ordering::Release);
+            let h = handle.clone();
             let path = path.as_ref().to_path_buf();
             tp.lock().unwrap().execute(move || {
                 if let Err(e) = h.copy(true, disable_splice) {
@@ -190,10 +191,6 @@ impl Handle {
                         debug!("read ahead {:?} canceled", path);
                     }
                 }
-                // the files are always closed in the main IO path, consume
-                // the fds to prevent closing
-                h.src_file.into_raw();
-                h.cache_file.into_raw();
             });
         }
 
@@ -234,9 +231,9 @@ impl Handle {
     fn src_chksum(f: &File) -> error::Result<GenericArray<u8, U64>> {
         let s = Handle::src_str_to_checksum(f)?;
         //debug!("checksum is {:?}", s);
-        let mut h = Sha512::default();
-        h.input(s.as_bytes());
-        return Ok(h.result());
+        let mut hasher = Sha512::default();
+        hasher.input(s.as_bytes());
+        return Ok(hasher.result());
     }
 
     pub fn make_pristine(
@@ -248,20 +245,19 @@ impl Handle {
             Err(e) => {
                 return Err(RError::from(e));
             }
-            Ok(mut cache) => {
-                let mut src = File::openat(src_dir, path, rlibc::O_RDONLY, 0)?;
+            Ok(cache) => {
+                let src = File::openat(src_dir, path, rlibc::O_RDONLY, 0)?;
                 cache.set_xattr(
                     "user.catfs.src_chksum",
                     Handle::src_chksum(&src)?.as_slice(),
                 )?;
-                src.close()?;
-                cache.close()?;
             }
         }
 
         return Ok(());
     }
 
+    #[cfg(target_os = "linux")]
     pub fn set_pristine(&self, pristine: bool) -> error::Result<()> {
         if pristine {
             self.cache_file.set_xattr(
@@ -272,7 +268,26 @@ impl Handle {
         } else {
             if let Err(e) = self.cache_file.remove_xattr("user.catfs.src_chksum") {
                 let my_errno = e.raw_os_error().unwrap();
-                if my_errno != libc::ENODATA && my_errno != libc::ENOATTR {
+                if my_errno != libc::ENODATA {
+                    return Err(RError::from(e));
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn set_pristine(&self, pristine: bool) -> error::Result<()> {
+        if pristine {
+            self.cache_file.set_xattr(
+                "user.catfs.src_chksum",
+                Handle::src_chksum(&self.src_file)?
+                    .as_slice(),
+            )?;
+        } else {
+            if let Err(e) = self.cache_file.remove_xattr("user.catfs.src_chksum") {
+                let my_errno = e.raw_os_error().unwrap();
+                if my_errno != libc::ENODATA {
                     return Err(RError::from(e));
                 }
             }
@@ -308,9 +323,9 @@ impl Handle {
         check_only: bool,
     ) -> error::Result<bool> {
         match File::openat(src_dir, path, rlibc::O_RDONLY, 0) {
-            Ok(mut src_file) => {
+            Ok(src_file) => {
                 match File::openat(cache_dir, path, rlibc::O_RDONLY, 0) {
-                    Ok(mut cache_file) => {
+                    Ok(cache_file) => {
                         let valid: bool;
                         if cache_valid_if_present || Handle::is_pristine(&src_file, &cache_file)? {
                             valid = true;
@@ -321,12 +336,9 @@ impl Handle {
                                 rlibc::unlinkat(cache_dir, path, 0)?;
                             }
                         }
-                        src_file.close()?;
-                        cache_file.close()?;
                         return Ok(valid);
                     }
                     Err(e) => {
-                        src_file.close()?;
                         if error::try_enoent(e)? {
                             return Ok(false);
                         }
@@ -350,15 +362,12 @@ impl Handle {
         let nwant = buf.len();
         let mut bytes_read: usize = 0;
 
-        if self.has_page_in_thread {
+        if self.has_page_in_thread.load(Ordering::Acquire) {
             self.wait_for_offset(offset + (buf.len() as i64), false)?;
         }
 
         while bytes_read < nwant {
-            match self.cache_file.read_at(
-                &mut buf[bytes_read..],
-                offset + (bytes_read as i64),
-            ) {
+            match self.cache_file.read_at(&mut buf[bytes_read..], offset + (bytes_read as i64),) {
                 Ok(nread) => {
                     if nread == 0 {
                         return Ok(bytes_read);
@@ -385,7 +394,7 @@ impl Handle {
 
         // wait for the background thread to finish so we won't have
         // more bytes being concurrently written to cache_file
-        if self.has_page_in_thread {
+        if self.has_page_in_thread.load(Ordering::Acquire)  {
             self.wait_for_eof()?;
         }
 
@@ -409,7 +418,7 @@ impl Handle {
             self.set_pristine(false)?;
         }
 
-        if self.has_page_in_thread {
+        if self.has_page_in_thread.load(Ordering::Acquire) {
             self.wait_for_offset(offset + (buf.len() as i64), true)?;
         }
 
@@ -464,7 +473,7 @@ impl Handle {
         let mut flushed_to_src = false;
         if self.dirty {
             if self.write_through_failed {
-                if self.has_page_in_thread {
+                if self.has_page_in_thread.load(Ordering::Acquire) {
                     self.wait_for_eof()?;
                 }
 
@@ -476,7 +485,7 @@ impl Handle {
             if let Err(e) = self.src_file.flush() {
                 error!("!flush(src) = {}", e);
                 // flush failed, now the fd is invalid, get rid of it
-                self.src_file.into_raw();
+                std::mem::drop(&self.src_file);
 
                 // we couldn't flush the src_file, because of some
                 // linux vfs oddity the file would appear to be
@@ -494,7 +503,7 @@ impl Handle {
             self.dirty = false;
             flushed_to_src = true;
         } else {
-            if self.has_page_in_thread {
+            if self.has_page_in_thread.load(Ordering::Acquire) {
                 // tell it to cancel
                 let mut page_in_res = self.page_in_res.0.lock().unwrap();
                 page_in_res.err = Some(RError::propagate(
@@ -509,7 +518,7 @@ impl Handle {
         let mut page_in_res = self.page_in_res.0.lock().unwrap();
         loop {
             if page_in_res.eof {
-                self.has_page_in_thread = false;
+                self.has_page_in_thread.store(false, Ordering::Release);
                 return Ok(());
             } else {
                 page_in_res = self.page_in_res.1.wait(page_in_res).unwrap();
@@ -527,7 +536,7 @@ impl Handle {
         }
         loop {
             if page_in_res.eof {
-                self.has_page_in_thread = false;
+                self.has_page_in_thread.store(false, Ordering::Release);
                 return Ok(());
             }
 
@@ -589,13 +598,6 @@ impl Handle {
             flags |= rlibc::O_CREAT;
         }
 
-        if let Err(e) = self.src_file.close() {
-            // normal for this close to fail
-            if e.raw_os_error().unwrap() != libc::ENOTSUP {
-                return Err(RError::from(e));
-            }
-        }
-
         self.src_file = File::openat(dir, path, flags, mode)?;
         return Ok(());
     }
@@ -603,6 +605,7 @@ impl Handle {
     fn copy_user(&self, rh: &File, wh: &File) -> error::Result<i64> {
         let mut buf = [0u8; 32 * 1024];
         let mut offset = 0;
+
         loop {
             let nread = rh.read_at(&mut buf, offset)?;
             if nread == 0 {
@@ -613,8 +616,8 @@ impl Handle {
 
             self.notify_offset(Ok(offset), false)?;
         }
-
         return Ok(offset);
+
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -622,23 +625,33 @@ impl Handle {
         let (pin, pout) = rlibc::pipe()?;
         let pin = fd::FileDesc::new(pin, /*close_on_drop=*/ true);
         let pout = fd::FileDesc::new(pout, /*close_on_drop=*/ true);
-
         let mut offset = 0;
-        loop {
-            let nread = rlibc::splice(rh.as_raw_fd(), offset, pout.as_raw_fd(), -1, 128 * 1024)?;
-            if nread == 0 {
-                break;
-            }
 
-            let mut written = 0;
-            while written < nread {
-                let nxfer = rlibc::splice(pin.as_raw_fd(), -1, wh.as_raw_fd(), offset, 128 * 1024)?;
+        match wh.write_lock() {
+            Ok( write_fd ) => {
+                match rh.read_lock() {
+                    Ok(read_fd) => {
+                        loop {
+                            let nread = rlibc::splice(*read_fd, offset, pout.as_raw_fd(), -1, 128 * 1024)?;
+                            if nread == 0 {
+                                break;
+                            }
 
-                written += nxfer;
-                offset += nxfer as i64;
+                            let mut written = 0;
+                            while written < nread {
+                                let nxfer = rlibc::splice(pin.as_raw_fd(), -1, *write_fd, offset, 128 * 1024)?;
 
-                self.notify_offset(Ok(offset), false)?;
-            }
+                                written += nxfer;
+                                offset += nxfer as i64;
+
+                                self.notify_offset(Ok(offset), false)?;
+                            }
+                        }
+                    },
+                    Err(_) => return Err(RError::from(io::Error::new(io::ErrorKind::Other, "couldn't get read lock!"))),
+                }
+            },
+            Err(_) => return Err(RError::from(io::Error::new(io::ErrorKind::Other, "couldn't get write lock!"))),
         }
 
         if let Err(e) = rlibc::close(pin.into_raw_fd()) {
@@ -696,28 +709,17 @@ impl Handle {
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        if self.cache_file.valid() {
-            if let Err(e) = self.cache_file.close() {
-                error!("!close(cache) = {}", RError::from(e));
-            }
-        }
-
-        if self.src_file.valid() {
-            if let Err(e) = self.src_file.close() {
-                error!("!close(src) = {}", RError::from(e));
-            }
-        }
     }
 }
 
 impl Clone for Handle {
     fn clone(&self) -> Self {
         return Handle {
-            src_file: File::with_fd(self.src_file.as_raw_fd()),
-            cache_file: File::with_fd(self.cache_file.as_raw_fd()),
+            src_file: self.src_file.clone(),
+            cache_file: self.cache_file.clone(),
             dirty: self.dirty,
             write_through_failed: self.write_through_failed,
-            has_page_in_thread: false,
+            has_page_in_thread: self.has_page_in_thread.clone(),
             page_in_res: self.page_in_res.clone(),
         };
     }

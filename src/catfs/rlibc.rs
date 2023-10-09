@@ -14,10 +14,12 @@ use std::ptr;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::RawFd;
 use std::os::unix::fs::FileExt;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, LockResult};
 
 use self::fuse::FileType;
 use self::time::Timespec;
 use self::xattr::FileExt as XattrFileExt;
+
 
 #[cfg(not(target_os = "macos"))]
 use self::libc::{fstat64, fstatvfs64, ftruncate64, open64, openat64, pread64, pwrite64, stat64, statvfs64};
@@ -47,6 +49,7 @@ pub fn to_cstring(path: &dyn AsRef<Path>) -> CString {
     let bytes = path.as_ref().as_os_str().to_os_string().into_vec();
     return CString::new(bytes).unwrap();
 }
+
 
 macro_rules! libc_wrap {
     ($( pub fn $name:ident($($arg:ident : $argtype:ty),*) $body:block )*) => (
@@ -400,7 +403,7 @@ pub fn fchmodat(dir: RawFd, path: &dyn AsRef<Path>, mode: libc::mode_t, flags: u
 }
 
 pub struct File {
-    fd: libc::c_int,
+    fd: Arc<RwLock<libc::c_int>>,
 }
 
 fn as_void_ptr<T>(s: &[T]) -> *const libc::c_void {
@@ -431,7 +434,15 @@ impl File {
             mode,
             fd
         );
-        return Ok(File { fd: fd });
+        return Ok(File { fd: Arc::new( RwLock::new( fd ) ) });
+    }
+
+    pub fn write_lock(&self) -> LockResult<RwLockWriteGuard<'_, i32>> {
+        return Ok(self.fd.write()?);
+    }
+
+    pub fn read_lock(&self) -> LockResult<RwLockReadGuard<'_, i32>> {
+        return Ok(self.fd.read()?);
     }
 
     #[allow(dead_code)]
@@ -444,42 +455,65 @@ impl File {
             mode,
             fd
         );
-        return Ok(File { fd: fd });
+        return Ok(File { fd: Arc::new(RwLock::new(fd)) });
     }
 
-    pub fn with_fd(fd: libc::c_int) -> File {
-        return File { fd: fd };
+    pub fn clone(&self) -> File {
+        return File { fd: self.fd.clone() };
     }
 
     pub fn valid(&self) -> bool {
-        return self.fd != -1;
+        match self.fd.read() {
+            Ok(fd) => *fd != -1,
+            Err(_) => false
+        }
     }
 
     pub fn filesize(&self) -> io::Result<u64> {
-        let st = fstat(self.fd)?;
-        return Ok(st.st_size as u64);
+        match self.fd.read() {
+            Ok(fd) => {
+                let st = fstat(*fd)?;
+                return Ok(st.st_size as u64);
+            },
+            Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "couldn't get read lock!")),
+        }
     }
 
     pub fn stat(&self) -> io::Result<stat64> {
-        fstat(self.fd)
+        match self.fd.read() {
+            Ok(fd) => {
+                fstat(*fd)
+            },
+            Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "couldn't get read lock!")),
+        }
     }
 
     pub fn truncate(&self, size: u64) -> io::Result<()> {
-        let res = unsafe { ftruncate64(self.fd, size as i64) };
-        if res < 0 {
-            return Err(io::Error::last_os_error());
-        } else {
-            return Ok(());
+        match self.fd.write() {
+            Ok(fd) => {
+                let res = unsafe { ftruncate64(*fd, size as i64) };
+                if res < 0 {
+                    return Err(io::Error::last_os_error());
+                } else {
+                    return Ok(());
+                }
+            },
+            Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "couldn't get write lock!")),
         }
     }
 
     #[cfg(not(target_os = "macos"))]
     pub fn allocate(&self, offset: u64, len: u64) -> io::Result<()> {
-        let res = unsafe { libc::posix_fallocate64(self.fd, offset as i64, len as i64) };
-        if res == 0 {
-            return Ok(());
-        } else {
-            return Err(io::Error::from_raw_os_error(res));
+        match self.fd.write() {
+            Ok(fd) => {
+                let res = unsafe { libc::posix_fallocate64(*fd, offset as i64, len as i64) };
+                if res == 0 {
+                    return Ok(());
+                } else {
+                    return Err(io::Error::from_raw_os_error(res));
+                }
+            },
+            Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "couldn't get write lock!")),
         }
     }
 
@@ -504,65 +538,75 @@ impl File {
     }
 
     pub fn chmod(&self, mode: libc::mode_t) -> io::Result<()> {
-        let res = unsafe { libc::fchmod(self.fd, mode) };
-        if res == 0 {
-            return Ok(());
-        } else {
-            return Err(io::Error::from_raw_os_error(res));
+        match self.fd.write() {
+            Ok(fd) => {
+                let res = unsafe { libc::fchmod(*fd, mode) };
+                if res == 0 {
+                    return Ok(());
+                } else {
+                    return Err(io::Error::from_raw_os_error(res));
+                }
+            },
+            Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "couldn't get write lock!")),
         }
     }
 
     pub fn read_at(&self, buf: &mut [u8], offset: i64) -> io::Result<usize> {
-        let nbytes =
-            unsafe { pread64(self.fd, as_mut_void_ptr(buf), buf.len(), offset) };
-        if nbytes < 0 {
-            return Err(io::Error::last_os_error());
-        } else {
-            return Ok(nbytes as usize);
+        match self.fd.read() {
+            Ok(fd) => {
+                let nbytes =
+                    unsafe { pread64(*fd, as_mut_void_ptr(buf), buf.len(), offset) };
+                if nbytes < 0 {
+                    return Err(io::Error::last_os_error());
+                } else {
+                    return Ok(nbytes as usize);
+                }
+            },
+            Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "couldn't get read lock!")),
         }
     }
 
     pub fn write_at(&self, buf: &[u8], offset: i64) -> io::Result<usize> {
-        let nbytes = unsafe { pwrite64(self.fd, as_void_ptr(buf), buf.len(), offset) };
-        if nbytes < 0 {
-            return Err(io::Error::last_os_error());
-        } else {
-            return Ok(nbytes as usize);
+        match self.fd.write() {
+            Ok(fd) => {
+                let nbytes = unsafe { pwrite64(*fd, as_void_ptr(buf), buf.len(), offset) };
+                if nbytes < 0 {
+                    return Err(io::Error::last_os_error());
+                } else {
+                    return Ok(nbytes as usize);
+                }
+            },
+            Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "couldn't get write lock!")),
         }
     }
 
     pub fn flush(&self) -> io::Result<()> {
-        debug!("flush {}", self.fd);
-        // trigger a flush for the underly fd, this could be called
-        // multiple times, for ex:
-        //
-        // int fd2 = dup(fd); close(fd2); close(fd)
-        //
-        // so the fd needs to stay valid. Note that this means when an
-        // application sends close(), kernel will send us
-        // flush()/release(), and we will send close()/close(), which
-        // will be translated to flush()/flush()/release() to the
-        // underlining filesystem
-        let fd = unsafe { libc::dup(self.fd) };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        } else {
-            let res = unsafe { libc::close(fd) };
-            if res < 0 {
-                return Err(io::Error::last_os_error());
-            } else {
-                return Ok(());
-            }
-        }
-    }
-
-    pub fn close(&mut self) -> io::Result<()> {
-        let res = unsafe { libc::close(self.fd) };
-        self.fd = -1;
-        if res < 0 {
-            return Err(io::Error::last_os_error());
-        } else {
-            return Ok(());
+        match self.fd.write() {
+            Ok(wfd) => {
+                debug!("flush {}", *wfd);
+                // trigger a flush for the underly fd, this could be called
+                // multiple times, for ex:
+                //
+                // int fd2 = dup(fd); close(fd2); close(fd)
+                //
+                // so the fd needs to stay valid. Note that this means when an
+                // application sends close(), kernel will send us
+                // flush()/release(), and we will send close()/close(), which
+                // will be translated to flush()/flush()/release() to the
+                // underlining filesystem
+                let fd = unsafe { libc::dup(*wfd) };
+                if fd < 0 {
+                    return Err(io::Error::last_os_error());
+                } else {
+                    let res = unsafe { libc::close(fd) };
+                    if res < 0 {
+                        return Err(io::Error::last_os_error());
+                    } else {
+                        return Ok(());
+                    }
+                }
+            },
+            Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "couldn't get write lock!")),
         }
     }
 
@@ -570,33 +614,35 @@ impl File {
         if !self.valid() {
             error!("as_raw_fd called on invalid fd");
         }
-
-        return self.fd;
-    }
-
-    pub fn into_raw(&mut self) -> RawFd {
-        let fd = self.fd;
-        self.fd = -1;
-        fd
+        match self.fd.read() {
+            Ok(fd) => {
+                return *fd;
+            },
+            Err(_) => return -1,
+        }
     }
 }
 
 impl Default for File {
     fn default() -> File {
-        File { fd: -1 }
+        File { fd: Arc::new( RwLock::new(-1)) }
     }
 }
 
 impl Drop for File {
     fn drop(&mut self) {
-        if self.fd != -1 {
-            error!(
-                "{} dropped but not closed: {}",
-                self.fd,
-                RError::from(io::Error::from_raw_os_error(libc::EIO))
-            );
-            if let Err(e) = self.close() {
-                error!("!close({}) = {}", self.fd, RError::from(e));
+        if Arc::strong_count(&self.fd) == 1 {
+            match self.fd.write() {
+                Ok(fd) => {
+                    if *fd >= 0 {
+                        let res = unsafe { libc::close(*fd) };
+                        debug!( "<-- closed {} result: {}", *fd, res);
+                        if res < 0 {
+                            error!("!close({}) = {}", *fd, res);
+                        }
+                    }
+                },
+                Err(e) => error!("!close() = {}", e.to_string()),
             }
         }
     }

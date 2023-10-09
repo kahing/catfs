@@ -1,7 +1,7 @@
 [package]
 name = "catfs"
-version = "0.9.0"
-authors = ["Ka-Hing Cheung <khc@hxbc.us>"]
+version = "0.9.1"
+authors = ["Ka-Hing Cheung <khc@hxbc.us>", "Joshua Pedrick <joshua.pedrick@gmail.com>"]
 description = "Cache AnyThing filesystem"
 keywords = ["filesystem", "fuse", "cache"]
 categories = ["caching", "filesystem"]
@@ -13,7 +13,7 @@ readme = "README.md"
 backtrace = "0.3"
 chan-signal = "0.2"
 clap = "2.29.0"
-daemonize = "0.2"
+daemonize = "0.5"
 env_logger = "0.4"
 fd = { git = "https://github.com/stemjail/fd-rs.git", rev = "3bc3e3587f8904cce8bf29163a2021c2f5906557" }
 fuse = "0.3.0"

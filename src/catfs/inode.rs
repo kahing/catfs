@@ -255,14 +255,13 @@ impl Inode {
     }
 
     pub fn truncate(&mut self, size: u64) -> error::Result<()> {
-        let mut f = File::openat(self.src_dir, &self.path, rlibc::O_WRONLY, 0)?;
+        let f = File::openat(self.src_dir, &self.path, rlibc::O_WRONLY, 0)?;
         f.set_size(size)?;
-        f.close()?;
+        std::mem::drop(&f);
 
         match File::openat(self.cache_dir, &self.path, rlibc::O_WRONLY, 0) {
-            Ok(mut f) => {
+            Ok(f) => {
                 f.set_size(size)?;
-                f.close()?;
             }
             Err(e) => {
                 error::try_enoent(e)?;
