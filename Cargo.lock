@@ -110,7 +110,7 @@ dependencies = [
  "sha2",
  "syslog",
  "threadpool",
- "time",
+ "time 0.2.0",
  "twox-hash",
  "xattr",
 ]
@@ -250,7 +250,7 @@ dependencies = [
  "log 0.3.9",
  "pkg-config",
  "thread-scoped",
- "time",
+ "time 0.1.45",
 ]
 
 [[package]]
@@ -519,7 +519,7 @@ checksum = "bbc9b0acde4f7c05fdc1cfb05239b8a53a66815dd86c67fee5aa9bfac5b4ed42"
 dependencies = [
  "libc",
  "log 0.3.9",
- "time",
+ "time 0.1.45",
  "unix_socket",
 ]
 
@@ -566,6 +566,12 @@ dependencies = [
  "wasi 0.10.0+wasi-snapshot-preview1",
  "winapi",
 ]
+
+[[package]]
+name = "time"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcc26de0a81a07c8352b548977862908fa9863e0e6e4f0eb36b2a9f4f8845585"
 
 [[package]]
 name = "twox-hash"
