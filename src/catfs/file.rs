@@ -569,7 +569,7 @@ impl Handle {
         path: &dyn AsRef<Path>,
         create: bool,
     ) -> error::Result<()> {
-        let _ = self.page_in_res.0.lock().unwrap();
+        let _unused = self.page_in_res.0.lock().unwrap();
 
         let mut buf = [0u8; 0];
         let mut flags = rlibc::O_RDWR;
