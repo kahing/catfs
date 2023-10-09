@@ -94,7 +94,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1339a1042f5d9f295737ad4d9a6ab6bf81c84a933dba110b9200cd6d1448b814"
 dependencies = [
  "byte-tools",
- "generic-array",
+ "generic-array 0.8.4",
 ]
 
 [[package]]
@@ -114,7 +114,7 @@ dependencies = [
  "env_logger",
  "fd",
  "fuse",
- "generic-array",
+ "generic-array 0.9.1",
  "itertools",
  "libc",
  "log 0.3.9",
@@ -184,7 +184,7 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5b29bf156f3f4b3c4f610a25ff69370616ae6e0657d416de22645483e72af0a"
 dependencies = [
- "generic-array",
+ "generic-array 0.8.4",
 ]
 
 [[package]]
@@ -238,11 +238,20 @@ dependencies = [
 
 [[package]]
 name = "generic-array"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fceb69994e330afed50c93524be68c42fa898c2d9fd4ee8da03bd7363acd26f2"
+checksum = "b2297fb0e3ea512e380da24b52dca3924028f59df5e3a17a18f81d8349ca7ebe"
 dependencies = [
  "nodrop",
+ "typenum",
+]
+
+[[package]]
+name = "generic-array"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d00328cedcac5e81c683e5620ca6a30756fc23027ebf9bff405c0e8da1fbb7e"
+dependencies = [
  "typenum",
 ]
 
@@ -493,7 +502,7 @@ dependencies = [
  "byte-tools",
  "digest",
  "fake-simd",
- "generic-array",
+ "generic-array 0.8.4",
 ]
 
 [[package]]
