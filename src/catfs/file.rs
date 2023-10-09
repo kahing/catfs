@@ -234,9 +234,9 @@ impl Handle {
     fn src_chksum(f: &File) -> error::Result<GenericArray<u8, U64>> {
         let s = Handle::src_str_to_checksum(f)?;
         //debug!("checksum is {:?}", s);
-        let mut h = Sha512::default();
-        h.input(s.as_bytes());
-        return Ok(h.result());
+        let mut hasher = Sha512::default();
+        hasher.update(s.as_bytes());
+        return Ok(hasher.finalize());
     }
 
     pub fn make_pristine(
